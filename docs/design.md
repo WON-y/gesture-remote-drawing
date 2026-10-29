@@ -1,26 +1,28 @@
 # AirSketch 설계
 
 폰 카메라로 손을 인식해 PC 브라우저 그림판에 허공 제스처로 그림을 그린다.
+한 방(세션)에 최대 6명이 각자 자기 PC 그림판 + 폰으로 들어와 같은 그림을 함께 그린다.
 
 ## 구성
 
 ```
- [폰] cam.html                       [PC] canvas.html
-  MediaPipe Hand Landmarker (JS)       그림판 + QR
-        │ wss /ws/cam/{sid}                ▲ wss /ws/canvas/{sid}
-        ▼                                  │
+ [폰] cam.html                       [PC] canvas.html (플레이어마다 1개)
+  MediaPipe Hand Landmarker (JS)       그림판 + 내 폰용 QR
+        │ wss /ws/cam/{sid}/{pid}          ▲ wss /ws/canvas/{sid}/{pid}
+        ▼                                  │  (방의 모든 플레이어 제스처 수신)
  ┌──────────────── edge (Nginx, HTTPS) ────────────────┐
  │  /            → web/ 정적 파일                       │
  │  /api, /ws    → c1_gateway:8000                     │
  └─────────────────────────────────────────────────────┘
         │
-   c1_gateway (FastAPI)  ── ws /ws/{sid} ──▶  c2_gesture (FastAPI)
-   세션·QR 발급, 중계     ◀── GestureEvent ──  제스처 판정 + 스무딩
+   c1_gateway (FastAPI)  ── ws /ws/{sid}-{pid} ──▶  c2_gesture (FastAPI)
+   방·플레이어·QR 발급,  ◀──── GestureEvent ─────  제스처 판정 + 스무딩
+   방 전체로 브로드캐스트                            (폰 연결마다 엔진 1개)
 ```
 
 | 폴더 | 역할 |
 |---|---|
-| `c1_gateway/` | `POST /api/session` 으로 세션 ID + QR(SVG) 발급, cam ↔ c2 ↔ canvas WebSocket 중계, `gallery.py` 갤러리 API |
+| `c1_gateway/` | 방 생성, 플레이어 입장(색 배정 + 폰용 QR 발급), cam → c2 → 방의 모든 canvas 중계, 펜/지우기/스냅샷 브로드캐스트, `gallery.py` 갤러리 API |
 | `c2_gesture/` | 21개 랜드마크 → 제스처 판정, One Euro Filter 로 좌표 스무딩, 디바운스 |
 | `web/` | `cam.html`(폰, MediaPipe JS), `canvas.html`(PC, 그림판), `gallery.html`(공유된 그림 모음) |
 | `edge/` | Nginx. TLS 종료 (폰은 HTTPS 에서만 카메라 허용), 정적 파일 + 프록시 |
@@ -32,11 +34,26 @@
 
 ## 흐름
 
-1. PC 에서 `https://<PC IP>:<포트>/` 접속 → `canvas.html` 이 세션 생성, QR 표시
-2. 폰으로 QR 스캔 → `cam.html?s=<sid>` → 카메라 + Hand Landmarker 실행
-3. 폰이 프레임마다 `LandmarkFrame` 전송 (최대 30fps, 손이 사라지면 빈 배열 1회)
-4. gateway 가 c2 로 전달 → c2 가 `GestureEvent` 반환 → gateway 가 그림판으로 전달
-5. 폰 연결/해제 시 그림판에 `PeerEvent` 전송 (연결되면 QR 숨김)
+1. 방장: `https://<주소>/` 접속 → `canvas.html` 이 방 생성(`POST /api/session`), 주소가 `canvas.html?room=<sid>` 로 바뀜
+2. 친구: 방장이 "친구 초대"로 복사한 `canvas.html?room=<sid>` 접속
+3. 각 그림판이 플레이어로 입장(`POST /api/session/{sid}/players`) → 플레이어 ID·색 배정, 자기 폰용 QR 표시.
+   플레이어 ID 는 sessionStorage 에 저장해 새로고침해도 같은 자리(색·폰 연결) 유지 (`PLAYER_IDLE_SEC` 동안)
+4. 각자 폰으로 자기 QR 스캔 → `cam.html?s=<sid>&p=<pid>&c=<색>` → 카메라 + Hand Landmarker 실행
+5. 폰이 프레임마다 `LandmarkFrame` 전송 (최대 30fps, 손이 사라지면 빈 배열 1회)
+6. gateway 가 c2 로 전달 → c2 가 `GestureEvent` 반환 → gateway 가 `player` 를 붙여 **방의 모든 그림판**으로 전달
+7. 입장/퇴장/폰 연결이 바뀌면 모든 그림판에 `PlayersEvent` 전송 (내 폰이 연결되면 QR 숨김)
+
+### 함께 그리기 동기화
+
+- 그림 자체는 서버에 저장하지 않는다. 모든 그림판이 같은 이벤트를 같은 순서로 받아 **각자 똑같이 그린다**
+  (좌표가 0~1 정규화라 화면 크기가 달라도 됨)
+- 그림판은 플레이어별 펜 상태(색, 굵기, 그리던 선, 지우개 연결점)를 따로 관리
+- 툴바 색/굵기/전체 지우기는 그림판 → gateway → 방 전체(보낸 쪽 포함)로 돌아온 뒤 적용해 순서를 맞춤.
+  제스처 색상 창(swipe)과 🤘 전체 지우기는 GestureEvent 를 받은 각 그림판이 직접 반영
+- 👍 저장은 제스처를 한 사람의 PC 에서만 다운로드
+- 늦게 들어온 그림판: gateway 가 기존 그림판 하나에 `snapshot_request` → 기존 그림판이 현재 그림 PNG + 펜 상태를
+  `snapshot` 으로 보냄 → 새 그림판은 입장 후 그려진 선 **아래에** 깔아 합침
+- 손 골격·커서는 플레이어 색으로 커서 레이어에만 그림 (PNG 저장에 안 들어감). 폰 화면의 랜드마크 점도 같은 색
 
 ## 메시지 규격 (`common/schema.py`)
 
@@ -44,13 +61,20 @@
 // cam → c2
 {"type":"landmarks","ts":1234.5,"mirrored":true,"handedness":"Right",
  "landmarks":[[x,y,z], ... 21개]}          // 손 없음 = []
-// c2 → canvas
-{"type":"gesture","gesture":"draw","x":0.62,"y":0.37,"ts":1234.5}
-// gateway → canvas
-{"type":"peer","role":"cam","state":"joined"}
+// c2 → gateway → 방의 모든 canvas (player 는 gateway 가 채움)
+{"type":"gesture","gesture":"draw","x":0.62,"y":0.37,"ts":1234.5,"landmarks":[[x,y],...],"player":"aB3x_9"}
+// gateway → 방의 모든 canvas
+{"type":"players","players":[{"id":"aB3x_9","color":"#e5484d","cam":true,"canvas":true}, ...]}
+// canvas → gateway → 방의 모든 canvas (player 는 gateway 가 보낸 쪽으로 덮어씀)
+{"type":"pen","color_idx":3,"width":8,"player":"aB3x_9"}
+{"type":"clear","player":"aB3x_9"}
+// gateway → 기존 canvas / 기존 canvas → gateway → 새 canvas
+{"type":"snapshot_request","to":"<새 pid>"}
+{"type":"snapshot","to":"<새 pid>","image":"data:image/png;base64,...","pens":{"<pid>":{"color_idx":0,"width":6}}}
 ```
 
-WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연결로 교체됨.
+WebSocket 종료 코드: `4404` 없는 방/플레이어, `4409` 같은 플레이어의 새 연결로 교체됨.
+REST: `409` 방이 가득 참 (최대 6명 = 플레이어 색 개수).
 
 ## 제스처
 
@@ -98,7 +122,7 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
   - `gallery.db` SQLite 메타데이터 — edge 에는 `images/` 만 마운트하므로 외부에 노출되지 않음
 - 소유자: 로그인 대신 브라우저가 만든 `owner_id`(`localStorage` 의 `gallery.owner`). 서버에는 sha256 해시만 저장하고 응답에 내보내지 않음.
   브라우저 데이터를 지우면 그 브라우저에서 올린 그림은 더 이상 삭제할 수 없다.
-- 업로드 한도: c1 `GALLERY_MAX_MB`(10) / edge `client_max_body_size`(11m). Nginx 기본값 1m 이면 고해상도 캔버스가 413 으로 실패한다.
+- 업로드 한도: c1 `GALLERY_MAX_MB`(10) / edge `client_max_body_size`(11m, `edge/snippets/airsketch-locations.conf`). Nginx 기본값 1m 이면 고해상도 캔버스가 413 으로 실패한다.
 - 서버는 Pillow 로 끝까지 디코딩해 PNG 인지 확인하고, 파일명은 uuid 로 새로 만든다. 제목·닉네임은 화면에 `textContent` 로만 넣는다.
 
 ## 실행
@@ -114,3 +138,33 @@ docker compose up -d --build
 - 폰은 MediaPipe wasm/모델을 CDN 에서 받으므로 인터넷이 필요하다.
 - 443/80 이 사용 중이면 `.env` 에서 `HTTPS_PORT`/`HTTP_PORT` 변경.
 - 폰에서 접속이 안 되면 Windows 방화벽의 해당 포트 인바운드 허용을 확인.
+
+### 빌드 없이 최신 main 실행
+
+main 에 합쳐질 때마다 CD 가 이미지를 GHCR 에 올리므로, 코드를 고치지 않고 실행만 할 때는 빌드가 필요 없다.
+
+```bash
+docker compose pull                # ghcr.io/won-y/gesture-remote-drawing/* 최신 이미지 받기
+docker compose up -d
+```
+
+특정 커밋 버전은 `IMAGE_TAG=<커밋 SHA> docker compose up -d`.
+
+## CI/CD (`.github/workflows/ci-cd.yml`)
+
+| 단계 | 언제 | 내용 |
+|---|---|---|
+| 코드 검사 + 단위 테스트 | PR, main 푸시 | `ruff check .` → `pytest` (`tests/test_gesture.py`: 합성 랜드마크로 제스처 판정 검증) |
+| 통합 테스트 | 위 통과 후 | 인증서 생성 → `docker compose up --build --wait` → `scripts/smoke_test.py` (세션 → 그림판·폰 WS → 랜드마크 → 그림판에 `draw` 도착 확인) |
+| 이미지 배포 | main 푸시 + 테스트 통과 | `edge`·`c1_gateway`·`c2_gesture` 이미지를 `ghcr.io/won-y/gesture-remote-drawing/<서비스>:latest`, `:<커밋 SHA>` 로 푸시 |
+
+로컬에서 같은 검사 돌리기:
+
+```bash
+pip install -r requirements-dev.txt   # Python 3.12 권장
+ruff check . && pytest
+# 서비스를 띄운 상태에서
+python scripts/smoke_test.py https://localhost
+```
+
+제스처 판정(`c2_gesture/gesture.py`)을 바꾸면 `tests/test_gesture.py` 에 해당 손 모양 테스트를 추가한다.
