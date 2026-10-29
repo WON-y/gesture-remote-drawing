@@ -121,29 +121,32 @@ docker compose up -d --build
 - 443/80 이 사용 중이면 `.env` 에서 `HTTPS_PORT`/`HTTP_PORT` 변경.
 - 폰에서 접속이 안 되면 Windows 방화벽의 해당 포트 인바운드 허용을 확인.
 
-## 외부 공개 (Cloudflare Tunnel)
+### 빌드 없이 최신 main 실행
 
-같은 Wi-Fi 가 아닌 곳에서 접속할 때 사용. 포트포워딩 없이 신뢰된 HTTPS 주소가 생겨 인증서 경고도 없다.
-
-```
-[외부 브라우저] ─HTTPS─▶ Cloudflare ─터널─▶ cloudflared ─HTTP─▶ edge:8081 ─▶ c1_gateway
-```
-
-- edge 의 `8081` 은 터널 전용 평문 HTTP 블록 (호스트에 노출 안 함). 라우팅은 443 과 같은 `edge/snippets/airsketch-locations.conf` 공유
-- 8081 로 들어온 요청에는 edge 가 `X-Via-Tunnel: 1` 을 붙이고, gateway 는 이때 `PUBLIC_HOST` 대신 요청 Host(터널 주소)로 QR 생성.
-  443 경로에서는 이 헤더를 지우므로 클라이언트가 위조할 수 없음
+main 에 합쳐질 때마다 CD 가 이미지를 GHCR 에 올리므로, 코드를 고치지 않고 실행만 할 때는 빌드가 필요 없다.
 
 ```bash
-# 임시 주소 (계정·도메인 불필요, 실행마다 주소 바뀜)
-docker compose --profile quick-tunnel up -d --build
-docker compose logs tunnel-quick | grep trycloudflare.com   # 발급된 https://xxxx.trycloudflare.com 확인
-
-# 고정 주소 (Cloudflare 도메인 필요)
-#  Zero Trust > Networks > Tunnels 에서 터널 생성 → Public Hostname 을 http://edge:8081 로 지정 → 토큰을 .env 의 TUNNEL_TOKEN 에
-docker compose --profile tunnel up -d --build
-
-# 공개 중단
-docker compose stop tunnel-quick   # 또는 tunnel
+docker compose pull                # ghcr.io/won-y/gesture-remote-drawing/* 최신 이미지 받기
+docker compose up -d
 ```
 
-주의: 주소를 아는 사람은 누구나 접속할 수 있다. 쓰지 않을 때는 터널을 꺼 둔다.
+특정 커밋 버전은 `IMAGE_TAG=<커밋 SHA> docker compose up -d`.
+
+## CI/CD (`.github/workflows/ci-cd.yml`)
+
+| 단계 | 언제 | 내용 |
+|---|---|---|
+| 코드 검사 + 단위 테스트 | PR, main 푸시 | `ruff check .` → `pytest` (`tests/test_gesture.py`: 합성 랜드마크로 제스처 판정 검증) |
+| 통합 테스트 | 위 통과 후 | 인증서 생성 → `docker compose up --build --wait` → `scripts/smoke_test.py` (세션 → 그림판·폰 WS → 랜드마크 → 그림판에 `draw` 도착 확인) |
+| 이미지 배포 | main 푸시 + 테스트 통과 | `edge`·`c1_gateway`·`c2_gesture` 이미지를 `ghcr.io/won-y/gesture-remote-drawing/<서비스>:latest`, `:<커밋 SHA>` 로 푸시 |
+
+로컬에서 같은 검사 돌리기:
+
+```bash
+pip install -r requirements-dev.txt   # Python 3.12 권장
+ruff check . && pytest
+# 서비스를 띄운 상태에서
+python scripts/smoke_test.py https://localhost
+```
+
+제스처 판정(`c2_gesture/gesture.py`)을 바꾸면 `tests/test_gesture.py` 에 해당 손 모양 테스트를 추가한다.
