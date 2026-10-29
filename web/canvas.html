@@ -3,41 +3,78 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AirSketch</title>
+  <title>Team5</title>
   <style>
-    :root { --bar: 56px; --accent: #4f8cff; }
-    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #f4f5f7; overflow: hidden; }
+    /* 아리따돋움: CDN 에는 Medium 한 굵기만 있음 → 700 은 브라우저가 굵게 합성 */
+    @font-face {
+      font-family: "ArittaDodum";
+      src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_one@1.0/Arita-dotum-Medium.woff") format("woff");
+      font-weight: 500;
+      font-display: swap;
+    }
+    :root {
+      --bar: 56px;
+      --mint: #2ec4a6;       /* 메인 민트 */
+      --mint-dark: #13866f;  /* 글자/강조 */
+      --mint-soft: #e6f8f3;  /* 배경 */
+      --mint-line: #b9eadf;  /* 테두리 */
+      --accent: var(--mint);
+    }
+    html, body { margin: 0; height: 100%; font-family: "ArittaDodum", system-ui, sans-serif; font-weight: 500;
+      color: #1f3a35; background: var(--mint-soft); overflow: hidden; }
+    button, input { font: inherit; }
     #toolbar { height: var(--bar); display: flex; align-items: center; gap: 12px; padding: 0 16px;
-      background: #fff; border-bottom: 1px solid #ddd; box-sizing: border-box; }
+      background: var(--mint-soft); border-bottom: 2px solid var(--mint-line); box-sizing: border-box; }
+    #toolbar strong { font-size: 20px; font-weight: 700; color: var(--mint-dark); letter-spacing: -.3px; }
+    #toolbar label { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--mint-dark); }
+    #toolbar input[type=range] { accent-color: var(--mint); }
     #toolbar .sp { flex: 1; }
     .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #bbb; cursor: pointer; }
-    .swatch.on { box-shadow: 0 0 0 2px var(--accent); }
-    button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; cursor: pointer; }
-    #peer { font-size: 14px; color: #888; }
-    #peer.on { color: #1a9c4a; font-weight: 600; }
-    #gesture { font-size: 14px; min-width: 70px; }
+    .swatch.on { box-shadow: 0 0 0 3px var(--accent); }
+    button { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
+      color: var(--mint-dark); font-weight: 700; cursor: pointer; transition: background .15s, color .15s; }
+    button:hover { background: var(--mint); color: #fff; }
+    #peer { font-size: 14px; color: #7a8f8a; }
+    #peer.on { color: var(--mint-dark); font-weight: 700; }
+    #gesture { font-size: 14px; min-width: 70px; font-weight: 700; color: var(--mint-dark); }
     #board { position: absolute; top: var(--bar); left: 0; right: 0; bottom: 0; }
     #board canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     #paint { background: #fff; }
     #qr { position: absolute; inset: 0; margin: auto; width: 340px; height: fit-content; padding: 24px;
-      background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.15); text-align: center; z-index: 10; }
+      background: #fff; border-radius: 16px; border-top: 6px solid var(--mint);
+      box-shadow: 0 10px 40px rgba(19,134,111,.18); text-align: center; z-index: 10; }
+    #qr h3 { font-weight: 700; color: var(--mint-dark); }
     #qr svg { width: 260px; height: 260px; }
-    #qr a { font-size: 12px; word-break: break-all; color: #666; }
-    #help { font-size: 13px; color: #555; text-align: left; line-height: 1.6; }
+    #qr a { font-size: 12px; word-break: break-all; color: var(--mint-dark); }
+    #guide { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(19,58,53,.35); z-index: 30; }
+    #guide[hidden] { display: none; }
+    #guide .card { position: relative; width: min(380px, calc(100% - 32px)); padding: 24px; box-sizing: border-box;
+      background: #fff; border-radius: 16px; border-top: 6px solid var(--mint);
+      box-shadow: 0 10px 40px rgba(19,134,111,.18); }
+    #guide h3 { margin: 0 0 14px; font-weight: 700; color: var(--mint-dark); }
+    #guide ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    #guide li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px;
+      background: var(--mint-soft); font-size: 15px; }
+    #guide li .ico { font-size: 22px; width: 28px; text-align: center; }
+    #guide li b { font-weight: 700; color: var(--mint-dark); }
+    #guide .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
+    #credit { margin-top: 10px; font-size: 10px; color: #8aa39d; }
     #toast { position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px;
-      background: rgba(0,0,0,.75); color: #fff; border-radius: 999px; font-size: 15px; z-index: 20;
+      background: var(--mint-dark); color: #fff; border-radius: 999px; font-size: 15px; font-weight: 700; z-index: 20;
       opacity: 0; transition: opacity .3s; pointer-events: none; }
     #toast.on { opacity: 1; }
   </style>
 </head>
 <body>
   <div id="toolbar">
-    <strong>AirSketch</strong>
+    <strong>Team5</strong>
     <div id="colors"></div>
     <label>굵기 <input id="width" type="range" min="2" max="30" value="6" /></label>
     <button id="clear">전체 지우기</button>
     <button id="save">PNG 저장</button>
     <button id="showQr">QR</button>
+    <button id="showGuide">사용방법</button>
     <span class="sp"></span>
     <span id="gesture">—</span>
     <span id="peer">● 폰 대기 중</span>
@@ -51,13 +88,21 @@
       <h3>폰 카메라로 QR을 스캔하세요</h3>
       <div id="qrImg">세션 생성 중…</div>
       <a id="camUrl" target="_blank"></a>
-      <div id="help">
-        ☝ 검지만 펴기: 그리기<br />
-        ✌ 검지+중지: 커서 이동<br />
-        🖐 손바닥: 지우개<br />
-        ✊ 주먹: 대기<br />
-        👍 엄지 척: 그림 저장
-      </div>
+      <div id="credit">This creation was designed using Amorepacific's Arita Font.</div>
+    </div>
+  </div>
+
+  <div id="guide" hidden>
+    <div class="card" role="dialog" aria-labelledby="guideTitle">
+      <button class="close" id="closeGuide" aria-label="닫기">✕</button>
+      <h3 id="guideTitle">손 모양 사용방법</h3>
+      <ul>
+        <li><span class="ico">☝</span><span><b>검지만 펴기</b> — 그리기</span></li>
+        <li><span class="ico">✌</span><span><b>검지+중지</b> — 커서 이동</span></li>
+        <li><span class="ico">🖐</span><span><b>손바닥</b> — 지우개</span></li>
+        <li><span class="ico">✊</span><span><b>주먹</b> — 대기</span></li>
+        <li><span class="ico">👍</span><span><b>엄지 척</b> — 그림 저장</span></li>
+      </ul>
     </div>
   </div>
 
@@ -122,7 +167,7 @@
       const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
       const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       const a = document.createElement("a");
-      a.download = `airsketch-${stamp}.png`;
+      a.download = `team5-${stamp}.png`;
       a.href = out.toDataURL("image/png");
       a.click();
       showToast(`💾 ${a.download} 저장됨`);
@@ -137,6 +182,12 @@
     }
     document.getElementById("save").onclick = saveDrawing;
     document.getElementById("showQr").onclick = () => ($qr.hidden = !$qr.hidden);
+    // 사용방법 창: 버튼/✕/바깥 클릭/Esc 로 열고 닫기
+    const $guide = document.getElementById("guide");
+    document.getElementById("showGuide").onclick = () => ($guide.hidden = false);
+    document.getElementById("closeGuide").onclick = () => ($guide.hidden = true);
+    $guide.onclick = (e) => { if (e.target === $guide) $guide.hidden = true; };
+    window.addEventListener("keydown", (e) => { if (e.key === "Escape") $guide.hidden = true; });
 
     // ---- 캔버스 크기 (DPR 대응, 리사이즈 시 내용 유지) ----
     function resize() {
