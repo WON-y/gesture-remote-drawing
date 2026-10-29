@@ -96,3 +96,33 @@ docker compose up -d --build
 - 폰은 MediaPipe wasm/모델을 CDN 에서 받으므로 인터넷이 필요하다.
 - 443/80 이 사용 중이면 `.env` 에서 `HTTPS_PORT`/`HTTP_PORT` 변경.
 - 폰에서 접속이 안 되면 Windows 방화벽의 해당 포트 인바운드 허용을 확인.
+
+### 빌드 없이 최신 main 실행
+
+main 에 합쳐질 때마다 CD 가 이미지를 GHCR 에 올리므로, 코드를 고치지 않고 실행만 할 때는 빌드가 필요 없다.
+
+```bash
+docker compose pull                # ghcr.io/won-y/gesture-remote-drawing/* 최신 이미지 받기
+docker compose up -d
+```
+
+특정 커밋 버전은 `IMAGE_TAG=<커밋 SHA> docker compose up -d`.
+
+## CI/CD (`.github/workflows/ci-cd.yml`)
+
+| 단계 | 언제 | 내용 |
+|---|---|---|
+| 코드 검사 + 단위 테스트 | PR, main 푸시 | `ruff check .` → `pytest` (`tests/test_gesture.py`: 합성 랜드마크로 제스처 판정 검증) |
+| 통합 테스트 | 위 통과 후 | 인증서 생성 → `docker compose up --build --wait` → `scripts/smoke_test.py` (세션 → 그림판·폰 WS → 랜드마크 → 그림판에 `draw` 도착 확인) |
+| 이미지 배포 | main 푸시 + 테스트 통과 | `edge`·`c1_gateway`·`c2_gesture` 이미지를 `ghcr.io/won-y/gesture-remote-drawing/<서비스>:latest`, `:<커밋 SHA>` 로 푸시 |
+
+로컬에서 같은 검사 돌리기:
+
+```bash
+pip install -r requirements-dev.txt   # Python 3.12 권장
+ruff check . && pytest
+# 서비스를 띄운 상태에서
+python scripts/smoke_test.py https://localhost
+```
+
+제스처 판정(`c2_gesture/gesture.py`)을 바꾸면 `tests/test_gesture.py` 에 해당 손 모양 테스트를 추가한다.
