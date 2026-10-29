@@ -91,7 +91,8 @@
     #shareError { margin: 0; min-height: 1.2em; font-size: 13px; color: #e5484d; }
     #share .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
     #guide .close, #share .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
-    #credit { margin-top: 10px; font-size: 10px; color: #8aa39d; }
+    .credit { margin-top: 10px; font-size: 10px; color: #8aa39d; }
+    #qr .brush-credit, #qr .brush-credit a { margin-top: 4px; font-size: 8px; color: #8aa39d; }
     #toast { position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px;
       background: var(--mint-dark); color: #fff; border-radius: 999px; font-size: 15px; font-weight: 700; z-index: 20;
       opacity: 0; transition: opacity .3s; pointer-events: none; }
@@ -140,8 +141,9 @@
       <h3>폰 카메라로 QR을 스캔하세요</h3>
       <div id="qrImg">세션 생성 중…</div>
       <a id="camUrl" target="_blank"></a>
-      <div class="credit">This creation was designed using Amorepacific's Arita Font.<br />
-        <a href="https://www.brusheezy.com">Brushes by Brusheezy!</a></div>
+      <div class="credit">This creation was designed using Amorepacific's Arita Font.</div>
+      <div class="brush-credit"><a href="https://www.brusheezy.com">Brushes by Brusheezy!</a> ·
+        <a href="https://www.magnific.com/kr/free-vector/minus-sign-brush-stroke-distressed-style-typography-vector_30087108.htm">작가 rawpixel.com 출처 Magnific</a></div>
     </div>
   </div>
 
@@ -160,7 +162,6 @@
         <li><span class="ico">👥</span><span><b>친구 초대</b> — 링크를 보내면 같은 그림판에 함께 그리기</span></li>
         <li><span class="ico">🖌</span><span><b>펜·붓·수채 버튼</b> — 브러시 바꾸기</span></li>
       </ul>
-      <div class="credit"><a href="https://www.brusheezy.com">Brushes by Brusheezy!</a></div>
     </div>
   </div>
 
