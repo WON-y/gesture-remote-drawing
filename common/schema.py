@@ -16,7 +16,7 @@ class Gesture(str, Enum):
     IDLE = "idle"    # 주먹: 아무 동작 안 함
     HOVER = "hover"  # 검지+중지: 커서만 이동
     DRAW = "draw"    # 검지만: 그리기
-    ERASE = "erase"  # 손바닥 펴기: 지우개
+    ERASE = "erase"  # 핀치(엄지+검지 끝 맞대기): 지우개
     SAVE = "save"    # 엄지 척: 그림 저장
     CLEAR = "clear"  # 검지+새끼(🤘) 길게 유지: 전체 지우기
     PALETTE = "palette"  # 검지·중지 붙이고 흔들기: 색상 창 열기, 붙인 채 좌우 스와이프로 색 선택

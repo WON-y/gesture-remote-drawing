@@ -15,7 +15,8 @@ FINGERS = [(8, 6), (12, 10), (16, 14), (20, 18)]  # (tip, pip): 검지, 중지, 
 
 EXTEND_RATIO = float(os.getenv("EXTEND_RATIO", "1.1"))   # tip-손목 거리 / pip-손목 거리
 # 그리는 중(draw)에는 판정을 느슨하게: 검지는 덜 펴져도, 다른 손가락은 더 확실히 펴져야 인정
-DRAW_INDEX_RATIO = float(os.getenv("DRAW_INDEX_RATIO", "1.0"))
+# 검지는 PIP 대신 뿌리(5) 기준(tip-손목 / mcp-손목): PIP 에서 굽어도 1.4 이상, 주먹으로 말면 1.0 미만
+DRAW_INDEX_RATIO = float(os.getenv("DRAW_INDEX_RATIO", "1.2"))
 DRAW_OTHER_RATIO = float(os.getenv("DRAW_OTHER_RATIO", "1.25"))
 STABLE_FRAMES = int(os.getenv("STABLE_FRAMES", "3"))     # 제스처 전환에 필요한 연속 프레임
 DRAW_RELEASE_FRAMES = int(os.getenv("DRAW_RELEASE_FRAMES", "6"))  # draw 에서 빠져나갈 때 필요한 연속 프레임
@@ -29,6 +30,10 @@ SHAKE_TURNS = int(os.getenv("SHAKE_TURNS", "3"))            # 필요한 좌우 �
 SHAKE_WINDOW_MS = float(os.getenv("SHAKE_WINDOW_MS", "1000"))  # 방향 전환을 세는 시간 창
 SWIPE_DIST = float(os.getenv("SWIPE_DIST", "0.09"))     # 색상 한 칸 넘기는 데 필요한 좌우 이동(그림판 폭 비율)
 THUMB_MARGIN = float(os.getenv("THUMB_MARGIN", "0.2"))  # 엄지 끝이 나머지보다 높아야 하는 정도(손 크기 비율)
+# 핀치(지우개): 엄지 끝-검지 끝 거리가 손 크기 × 이 비율보다 작으면 인정.
+# 지우는 중에는 더 넓은 RELEASE 비율을 써서 경계에서 erase ↔ 다른 제스처가 깜빡이지 않게 함
+PINCH_RATIO = float(os.getenv("PINCH_RATIO", "0.3"))
+PINCH_RELEASE_RATIO = float(os.getenv("PINCH_RELEASE_RATIO", "0.45"))
 ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 좌우 여백(0~0.5)
 ACTIVE_TOP = float(os.getenv("ACTIVE_TOP", "0.05"))       # 카메라 위 여백
 # 카메라 아래 여백. 검지 끝은 손 맨 위라 끝까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊기므로 크게 둠
@@ -95,15 +100,26 @@ def fingers_together(lm) -> bool:
     return _dist(lm[INDEX_TIP], lm[MIDDLE_TIP]) < _dist(lm[INDEX_MCP], lm[MIDDLE_MCP]) * TOGETHER_RATIO
 
 
-def classify(lm, drawing: bool = False) -> Gesture:
-    ratios = (DRAW_INDEX_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
+def pinch(lm, ratio: float = PINCH_RATIO) -> bool:
+    """엄지 끝(4)과 검지 끝(8)이 맞닿음. 주먹에서도 두 끝이 가까울 수 있어서
+    검지 끝이 검지 뿌리(5)보다 손목에서 멀 때(손바닥 안으로 말려 있지 않을 때)만 인정."""
+    size = _dist(lm[WRIST], lm[MIDDLE_MCP])
+    near = _dist(lm[THUMB_TIP], lm[INDEX_TIP]) < ratio * size
+    return near and _dist(lm[INDEX_TIP], lm[WRIST]) > _dist(lm[INDEX_MCP], lm[WRIST])
+
+
+def classify(lm, drawing: bool = False, erasing: bool = False) -> Gesture:
+    # 핀치는 다른 손가락 모양과 상관없이 먼저 판정 (새끼 등을 신경 쓰지 않아도 되도록)
+    if pinch(lm, PINCH_RELEASE_RATIO if erasing else PINCH_RATIO):
+        return Gesture.ERASE
+    ratios = (EXTEND_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
     i, m, r, p = finger_states(lm, ratios)
+    if drawing:  # 그리다 검지가 굽어도(끝이 PIP 와 겹쳐 보여도) 손바닥 안으로 말리지 않았으면 유지
+        i = _dist(lm[INDEX_TIP], lm[WRIST]) > _dist(lm[INDEX_MCP], lm[WRIST]) * DRAW_INDEX_RATIO
     if i and not (m or r or p):
         return Gesture.DRAW
     if i and m and not (r or p):
         return Gesture.HOVER
-    if i and m and r and p:
-        return Gesture.ERASE
     if i and p and not (m or r):
         return Gesture.CLEAR
     if not (i or m or r or p):
@@ -218,8 +234,13 @@ class GestureEngine:
                 self._reset_shake()
 
         lm = frame.landmarks
-        g = self._debounce(classify(lm, drawing=self.gesture == Gesture.DRAW))
-        pt = lm[MIDDLE_MCP] if g == Gesture.ERASE else lm[INDEX_TIP]
+        g = self._debounce(classify(lm, drawing=self.gesture == Gesture.DRAW,
+                                    erasing=self.gesture == Gesture.ERASE))
+        if g == Gesture.ERASE:  # 지우개는 엄지와 검지가 맞닿은 점
+            a, b = lm[THUMB_TIP], lm[INDEX_TIP]
+            pt = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        else:
+            pt = lm[INDEX_TIP]
         x = 1 - pt[0] if frame.mirrored else pt[0]
         t = frame.ts / 1000.0
 
