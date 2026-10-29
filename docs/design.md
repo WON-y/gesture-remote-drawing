@@ -58,15 +58,18 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
 |---|---|---|
 | ☝ 검지만 | `draw` | 검지 끝(8)으로 선 그리기 |
 | ✌ 검지+중지 | `hover` | 커서만 이동 |
-| 🖐 네 손가락 | `erase` | 손바닥(9) 위치 지우개 |
+| 🤏 엄지+검지 끝 맞대기 | `erase` | 두 손가락이 맞닿은 점 위치 지우개 |
+| 🖐 그 외 (손바닥 등 애매한 모양) | `hover` | 커서만 이동 |
 | ✊ 주먹 | `idle` | 대기 |
 | 👍 엄지 척 | `save` | 그림판을 PNG 로 자동 저장 |
 | 손 없음 | `none` | 선 끊기 |
 
 - 손가락 펴짐: `|tip−wrist| > |pip−wrist| × EXTEND_RATIO` (손 회전에 강함)
 - 디바운스: 같은 제스처가 `STABLE_FRAMES` 연속일 때만 전환 (`save` 는 오작동 방지로 `SAVE_FRAMES`)
-- 선 끊김 방지: `draw` 중에는 검지 기준을 낮추고(`DRAW_INDEX_RATIO`) 다른 손가락 기준을 높이며(`DRAW_OTHER_RATIO`),
+- 선 끊김 방지: `draw` 중에는 검지를 PIP 대신 뿌리(5) 기준으로 판정해 굽어도 유지하고(`DRAW_INDEX_RATIO`) 다른 손가락 기준을 높이며(`DRAW_OTHER_RATIO`),
   `draw` 에서 벗어나려면 `DRAW_RELEASE_FRAMES` 연속 필요. 손을 놓쳤다가 `LOST_GRACE_MS` 안에 다시 찾으면 이전 제스처 유지
+- 핀치: 다른 손가락보다 먼저 판정. `|엄지끝(4)−검지끝(8)| < PINCH_RATIO × 손크기(손목−9)` 이고,
+  주먹과 구분하려고 검지 끝이 검지 뿌리(5)보다 손목에서 멀어야 함. 지우는 중에는 `PINCH_RELEASE_RATIO` 로 느슨하게(깜빡임 방지)
 - 엄지 척: 네 손가락 접힘 + 엄지 끝(4)이 다른 모든 점보다 `THUMB_MARGIN`×손크기 이상 높고 위를 향함
 - 저장: 그림판이 `save` 로 바뀌는 순간 1회 다운로드 (`airsketch-날짜-시각.png`, 흰 배경)
 - 좌표: 전면 카메라 좌우 반전 → 가장자리 여백(좌우 `ACTIVE_MARGIN`, 위 `ACTIVE_TOP`, 아래 `ACTIVE_BOTTOM`) 잘라 0~1 로 확장 → One Euro Filter

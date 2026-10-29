@@ -99,7 +99,7 @@
       <ul>
         <li><span class="ico">☝</span><span><b>검지만 펴기</b> — 그리기</span></li>
         <li><span class="ico">✌</span><span><b>검지+중지</b> — 커서 이동</span></li>
-        <li><span class="ico">🖐</span><span><b>손바닥</b> — 지우개</span></li>
+        <li><span class="ico">🤏</span><span><b>엄지+검지 끝 맞대기</b> — 지우개</span></li>
         <li><span class="ico">✊</span><span><b>주먹</b> — 대기</span></li>
         <li><span class="ico">👍</span><span><b>엄지 척</b> — 그림 저장</span></li>
       </ul>
@@ -125,6 +125,7 @@
     let color = COLORS[0];
     let lastPt = null; // 직전 그리기 좌표 (null 이면 선 끊김)
     let lastMid = null; // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
+    let lastErase = null; // 직전 지우개 좌표 (null 이면 끊김)
     let prevGesture = "none";
 
     // 곡선은 중점까지만 그리므로, 선이 끝날 때 마지막 점까지 마저 잇는다
@@ -136,7 +137,7 @@
         pctx.lineTo(lastPt.x, lastPt.y);
         pctx.stroke();
       }
-      lastPt = lastMid = null;
+      lastPt = lastMid = lastErase = null;
     }
     let lastSave = 0;
 
@@ -207,7 +208,7 @@
     resize();
 
     // ---- 제스처 처리 ----
-    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개", save: "👍 저장" };
+    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🤏 지우개", save: "👍 저장" };
     // MediaPipe 손 랜드마크 연결선 (손목 0 → 각 손가락)
     const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
       [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
@@ -273,12 +274,18 @@
         pctx.stroke();
         lastPt = pt;
       } else if (ev.gesture === "erase") {
-        endStroke();
+        if (lastPt) endStroke(); // 그리던 선만 마무리 (지우개 연결점은 유지)
+        // 프레임마다 원만 찍으면 빠르게 움직일 때 원 사이가 비므로, 직전 점과 굵은 선으로 잇는다
+        const from = lastErase ?? pt;
         pctx.globalCompositeOperation = "destination-out";
+        pctx.lineWidth = ERASER_SIZE * 2;
+        pctx.lineCap = pctx.lineJoin = "round";
         pctx.beginPath();
-        pctx.arc(pt.x, pt.y, ERASER_SIZE, 0, Math.PI * 2);
-        pctx.fill();
+        pctx.moveTo(from.x, from.y);
+        pctx.lineTo(pt.x, pt.y);
+        pctx.stroke();
         pctx.globalCompositeOperation = "source-over";
+        lastErase = pt;
       } else {
         endStroke();
       }
