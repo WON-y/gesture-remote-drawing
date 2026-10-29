@@ -14,7 +14,10 @@ FINGERS = [(8, 6), (12, 10), (16, 14), (20, 18)]  # (tip, pip): 검지, 중지, 
 
 EXTEND_RATIO = float(os.getenv("EXTEND_RATIO", "1.1"))   # tip-손목 거리 / pip-손목 거리
 STABLE_FRAMES = int(os.getenv("STABLE_FRAMES", "3"))     # 제스처 전환에 필요한 연속 프레임
-ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 가장자리 여백(0~0.5)
+ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 좌우 여백(0~0.5)
+ACTIVE_TOP = float(os.getenv("ACTIVE_TOP", "0.05"))       # 카메라 위 여백
+# 카메라 아래 여백. 검지 끝은 손 맨 위라 끝까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊기므로 크게 둠
+ACTIVE_BOTTOM = float(os.getenv("ACTIVE_BOTTOM", "0.4"))
 MIN_CUTOFF = float(os.getenv("FILTER_MIN_CUTOFF", "1.5"))
 BETA = float(os.getenv("FILTER_BETA", "5.0"))
 
@@ -73,10 +76,17 @@ def classify(lm) -> Gesture:
     return Gesture.HOVER  # 애매한 손 모양은 그리지 않고 커서만 이동
 
 
-def _to_canvas(v: float) -> float:
-    """카메라 가장자리 여백을 잘라내 그림판 끝까지 손이 닿도록 확장."""
-    span = 1 - 2 * ACTIVE_MARGIN
-    return min(1.0, max(0.0, (v - ACTIVE_MARGIN) / span))
+def _scale(v: float, lo: float, hi: float) -> float:
+    """카메라 좌표 [lo, hi] 구간을 그림판 0~1로 확장 (가장자리 여백을 잘라 그림판 끝까지 손이 닿도록)."""
+    return min(1.0, max(0.0, (v - lo) / (hi - lo)))
+
+
+def _to_canvas_x(v: float) -> float:
+    return _scale(v, ACTIVE_MARGIN, 1 - ACTIVE_MARGIN)
+
+
+def _to_canvas_y(v: float) -> float:
+    return _scale(v, ACTIVE_TOP, 1 - ACTIVE_BOTTOM)
 
 
 class GestureEngine:
@@ -101,7 +111,8 @@ class GestureEngine:
 
     def update(self, frame: LandmarkFrame) -> GestureEvent | None:
         if not frame.landmarks:
-            if self.gesture == Gesture.NONE:
+            # 디바운스 중(candidate 있음)에 손이 사라져도 그림판의 골격을 지우도록 알림
+            if self.gesture == Gesture.NONE and self.candidate == Gesture.NONE:
                 return None
             self.gesture = self.candidate = Gesture.NONE
             self.count = 0
@@ -114,9 +125,15 @@ class GestureEngine:
         pt = lm[MIDDLE_MCP] if g == Gesture.ERASE else lm[INDEX_TIP]
         x = 1 - pt[0] if frame.mirrored else pt[0]
         t = frame.ts / 1000.0
+
+        def to_canvas_pt(p):
+            px = 1 - p[0] if frame.mirrored else p[0]
+            return (round(_to_canvas_x(px), 4), round(_to_canvas_y(p[1]), 4))
+
         return GestureEvent(
             gesture=g,
-            x=round(self.fx(_to_canvas(x), t), 4),
-            y=round(self.fy(_to_canvas(pt[1]), t), 4),
+            x=round(self.fx(_to_canvas_x(x), t), 4),
+            y=round(self.fy(_to_canvas_y(pt[1]), t), 4),
             ts=frame.ts,
+            landmarks=[to_canvas_pt(p) for p in lm],
         )

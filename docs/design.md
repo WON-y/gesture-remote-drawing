@@ -64,7 +64,8 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
 
 - 손가락 펴짐: `|tip−wrist| > |pip−wrist| × EXTEND_RATIO` (손 회전에 강함)
 - 디바운스: 같은 제스처가 `STABLE_FRAMES` 연속일 때만 전환
-- 좌표: 전면 카메라 좌우 반전 → 가장자리 `ACTIVE_MARGIN` 잘라 0~1 로 확장 → One Euro Filter
+- 좌표: 전면 카메라 좌우 반전 → 가장자리 여백(좌우 `ACTIVE_MARGIN`, 위 `ACTIVE_TOP`, 아래 `ACTIVE_BOTTOM`) 잘라 0~1 로 확장 → One Euro Filter
+  - 아래 여백을 크게 두는 이유: 검지 끝은 손 맨 위라, 카메라 맨 아래까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊김
 
 ## 실행
 

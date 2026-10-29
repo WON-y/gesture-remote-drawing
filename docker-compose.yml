@@ -39,6 +39,8 @@ services:
     environment:
       STABLE_FRAMES: ${STABLE_FRAMES:-3}
       ACTIVE_MARGIN: ${ACTIVE_MARGIN:-0.1}
+      ACTIVE_TOP: ${ACTIVE_TOP:-0.05}
+      ACTIVE_BOTTOM: ${ACTIVE_BOTTOM:-0.4}
       FILTER_MIN_CUTOFF: ${FILTER_MIN_CUTOFF:-1.5}
       FILTER_BETA: ${FILTER_BETA:-5.0}
     restart: unless-stopped

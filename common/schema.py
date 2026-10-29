@@ -43,6 +43,8 @@ class GestureEvent(BaseModel):
     x: float | None = None  # 그림판 기준 정규화 좌표(0~1), 스무딩 적용됨
     y: float | None = None
     ts: float
+    # 그림판 좌표(0~1)로 변환한 21개 점 [[x, y], ...]. 표시용이라 스무딩은 적용하지 않음
+    landmarks: list[tuple[float, float]] | None = None
 
 
 # ---- gateway → canvas ----

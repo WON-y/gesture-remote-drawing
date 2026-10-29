@@ -114,11 +114,34 @@
 
     // ---- 제스처 처리 ----
     const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개" };
+    // MediaPipe 손 랜드마크 연결선 (손목 0 → 각 손가락)
+    const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+
+    // 손 골격은 cursor 레이어에만 그림 → 매 프레임 지워지고 PNG 저장에도 안 들어감
+    function drawHand(lm, w, h) {
+      if (!lm) return;
+      cctx.strokeStyle = "rgba(79,140,255,.5)";
+      cctx.lineWidth = 2;
+      cctx.beginPath();
+      for (const [a, b] of HAND_CONNECTIONS) {
+        cctx.moveTo(lm[a][0] * w, lm[a][1] * h);
+        cctx.lineTo(lm[b][0] * w, lm[b][1] * h);
+      }
+      cctx.stroke();
+      cctx.fillStyle = "#4f8cff";
+      for (const [x, y] of lm) {
+        cctx.beginPath();
+        cctx.arc(x * w, y * h, 3, 0, Math.PI * 2);
+        cctx.fill();
+      }
+    }
 
     function onGesture(ev) {
       $gesture.textContent = LABEL[ev.gesture] ?? ev.gesture;
       const w = board.clientWidth, h = board.clientHeight;
       cctx.clearRect(0, 0, w, h);
+      drawHand(ev.landmarks, w, h);
       if (ev.x == null) { lastPt = null; return; }
 
       const pt = { x: ev.x * w, y: ev.y * h };
