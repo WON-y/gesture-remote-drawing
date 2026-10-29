@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AirSketch</title>
+  <style>
+    :root { --bar: 56px; --accent: #4f8cff; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #f4f5f7; overflow: hidden; }
+    #toolbar { height: var(--bar); display: flex; align-items: center; gap: 12px; padding: 0 16px;
+      background: #fff; border-bottom: 1px solid #ddd; box-sizing: border-box; }
+    #toolbar .sp { flex: 1; }
+    .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #bbb; cursor: pointer; }
+    .swatch.on { box-shadow: 0 0 0 2px var(--accent); }
+    button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; cursor: pointer; }
+    #peer { font-size: 14px; color: #888; }
+    #peer.on { color: #1a9c4a; font-weight: 600; }
+    #gesture { font-size: 14px; min-width: 70px; }
+    #board { position: absolute; top: var(--bar); left: 0; right: 0; bottom: 0; }
+    #board canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #paint { background: #fff; }
+    #qr { position: absolute; inset: 0; margin: auto; width: 340px; height: fit-content; padding: 24px;
+      background: #fff; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,.15); text-align: center; z-index: 10; }
+    #qr svg { width: 260px; height: 260px; }
+    #qr a { font-size: 12px; word-break: break-all; color: #666; }
+    #help { font-size: 13px; color: #555; text-align: left; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <strong>AirSketch</strong>
+    <div id="colors"></div>
+    <label>굵기 <input id="width" type="range" min="2" max="30" value="6" /></label>
+    <button id="clear">전체 지우기</button>
+    <button id="save">PNG 저장</button>
+    <button id="showQr">QR</button>
+    <span class="sp"></span>
+    <span id="gesture">—</span>
+    <span id="peer">● 폰 대기 중</span>
+  </div>
+
+  <div id="board">
+    <canvas id="paint"></canvas>
+    <canvas id="cursor"></canvas>
+    <div id="qr">
+      <h3>폰 카메라로 QR을 스캔하세요</h3>
+      <div id="qrImg">세션 생성 중…</div>
+      <a id="camUrl" target="_blank"></a>
+      <div id="help">
+        ☝ 검지만 펴기: 그리기<br />
+        ✌ 검지+중지: 커서 이동<br />
+        🖐 손바닥: 지우개<br />
+        ✊ 주먹: 대기
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const COLORS = ["#222222", "#e5484d", "#f5a623", "#30a46c", "#4f8cff", "#8e4ec6"];
+    const ERASER_SIZE = 40;
+
+    const board = document.getElementById("board");
+    const paint = document.getElementById("paint");
+    const cursor = document.getElementById("cursor");
+    const pctx = paint.getContext("2d");
+    const cctx = cursor.getContext("2d");
+    const $peer = document.getElementById("peer");
+    const $gesture = document.getElementById("gesture");
+    const $qr = document.getElementById("qr");
+
+    let color = COLORS[0];
+    let lastPt = null; // 직전 그리기 좌표 (null 이면 선 끊김)
+
+    // ---- 툴바 ----
+    const $colors = document.getElementById("colors");
+    $colors.style.display = "flex";
+    $colors.style.gap = "8px";
+    COLORS.forEach((c, i) => {
+      const s = document.createElement("div");
+      s.className = "swatch" + (i === 0 ? " on" : "");
+      s.style.background = c;
+      s.onclick = () => {
+        color = c;
+        document.querySelectorAll(".swatch").forEach((e) => e.classList.remove("on"));
+        s.classList.add("on");
+      };
+      $colors.appendChild(s);
+    });
+    document.getElementById("clear").onclick = () => pctx.clearRect(0, 0, paint.width, paint.height);
+    document.getElementById("save").onclick = () => {
+      const a = document.createElement("a");
+      a.download = "airsketch.png";
+      a.href = paint.toDataURL("image/png");
+      a.click();
+    };
+    document.getElementById("showQr").onclick = () => ($qr.hidden = !$qr.hidden);
+
+    // ---- 캔버스 크기 (DPR 대응, 리사이즈 시 내용 유지) ----
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = board.clientWidth, h = board.clientHeight;
+      const tmp = document.createElement("canvas");
+      tmp.width = paint.width; tmp.height = paint.height;
+      tmp.getContext("2d").drawImage(paint, 0, 0);
+      for (const c of [paint, cursor]) {
+        c.width = Math.round(w * dpr);
+        c.height = Math.round(h * dpr);
+        c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+      pctx.drawImage(tmp, 0, 0, w, h);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // ---- 제스처 처리 ----
+    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개" };
+
+    function onGesture(ev) {
+      $gesture.textContent = LABEL[ev.gesture] ?? ev.gesture;
+      const w = board.clientWidth, h = board.clientHeight;
+      cctx.clearRect(0, 0, w, h);
+      if (ev.x == null) { lastPt = null; return; }
+
+      const pt = { x: ev.x * w, y: ev.y * h };
+      const width = +document.getElementById("width").value;
+
+      if (ev.gesture === "draw") {
+        pctx.globalCompositeOperation = "source-over";
+        pctx.strokeStyle = color;
+        pctx.lineWidth = width;
+        pctx.lineCap = pctx.lineJoin = "round";
+        pctx.beginPath();
+        const from = lastPt ?? pt;
+        pctx.moveTo(from.x, from.y);
+        pctx.lineTo(pt.x, pt.y);
+        pctx.stroke();
+        lastPt = pt;
+      } else if (ev.gesture === "erase") {
+        pctx.globalCompositeOperation = "destination-out";
+        pctx.beginPath();
+        pctx.arc(pt.x, pt.y, ERASER_SIZE, 0, Math.PI * 2);
+        pctx.fill();
+        pctx.globalCompositeOperation = "source-over";
+        lastPt = null;
+      } else {
+        lastPt = null;
+      }
+
+      // 커서
+      const r = ev.gesture === "erase" ? ERASER_SIZE : Math.max(width / 2, 4);
+      cctx.beginPath();
+      cctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+      cctx.strokeStyle = ev.gesture === "draw" ? color : "#999";
+      cctx.lineWidth = 2;
+      cctx.stroke();
+    }
+
+    function onPeer(ev) {
+      if (ev.role !== "cam") return;
+      const on = ev.state === "joined";
+      $peer.textContent = on ? "● 폰 연결됨" : "● 폰 대기 중";
+      $peer.classList.toggle("on", on);
+      $qr.hidden = on;
+      if (!on) { lastPt = null; cctx.clearRect(0, 0, cursor.width, cursor.height); }
+    }
+
+    // ---- 세션 + WebSocket ----
+    async function start() {
+      const res = await fetch("/api/session", { method: "POST" });
+      const info = await res.json();
+      document.getElementById("qrImg").innerHTML = info.qr_svg;
+      const $a = document.getElementById("camUrl");
+      $a.href = $a.textContent = info.cam_url;
+
+      const connect = () => {
+        const ws = new WebSocket(`wss://${location.host}/ws/canvas/${info.session_id}`);
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "gesture") onGesture(msg);
+          else if (msg.type === "peer") onPeer(msg);
+        };
+        ws.onclose = (e) => {
+          if (e.code === 4409) return; // 다른 탭이 이 세션을 가져감
+          setTimeout(connect, 1000);
+        };
+      };
+      connect();
+    }
+    start().catch((e) => (document.getElementById("qrImg").textContent = "세션 생성 실패: " + e.message));
+  </script>
+</body>
+</html>

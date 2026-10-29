@@ -1,0 +1,44 @@
+name: airsketch
+
+services:
+  edge:
+    build:
+      context: .
+      dockerfile: edge/Dockerfile
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      HTTPS_PORT: ${HTTPS_PORT:-443}   # http → https 리다이렉트용
+    volumes:
+      - ./edge/certs:/etc/nginx/certs:ro
+      - ./web:/usr/share/nginx/html:ro   # 개발 중 HTML 수정 즉시 반영
+    depends_on:
+      c1_gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  c1_gateway:
+    build:
+      context: .
+      dockerfile: c1_gateway/Dockerfile
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      HTTPS_PORT: ${HTTPS_PORT:-443}
+      C2_URL: ws://c2_gesture:8001
+      SESSION_TTL: ${SESSION_TTL:-3600}
+    depends_on:
+      c2_gesture:
+        condition: service_healthy
+    restart: unless-stopped
+
+  c2_gesture:
+    build:
+      context: .
+      dockerfile: c2_gesture/Dockerfile
+    environment:
+      STABLE_FRAMES: ${STABLE_FRAMES:-3}
+      ACTIVE_MARGIN: ${ACTIVE_MARGIN:-0.1}
+      FILTER_MIN_CUTOFF: ${FILTER_MIN_CUTOFF:-1.5}
+      FILTER_BETA: ${FILTER_BETA:-5.0}
+    restart: unless-stopped

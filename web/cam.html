@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AirSketch Cam</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+    #stage { position: fixed; inset: 0; }
+    video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .mirror { transform: scaleX(-1); }
+    #status { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+      padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.6); font-size: 15px; text-align: center; }
+    #gesture { font-weight: 700; }
+    #start { position: fixed; inset: 0; margin: auto; width: 220px; height: 64px; border: 0; border-radius: 32px;
+      font-size: 18px; font-weight: 700; background: #4f8cff; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <video id="video" class="mirror" playsinline muted></video>
+    <canvas id="overlay" class="mirror"></canvas>
+  </div>
+  <button id="start" hidden>카메라 시작</button>
+  <div id="status">준비 중…</div>
+
+  <script type="module">
+    import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+    const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+    const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+    const SEND_INTERVAL_MS = 1000 / 30;
+    const MIRRORED = true; // 전면 카메라
+
+    const sid = new URLSearchParams(location.search).get("s");
+    const $status = document.getElementById("status");
+    const video = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const octx = overlay.getContext("2d");
+    const setStatus = (t) => ($status.textContent = t);
+
+    if (!sid) {
+      setStatus("세션 정보가 없습니다. PC 화면의 QR을 다시 스캔하세요.");
+      throw new Error("no session");
+    }
+
+    // ---- WebSocket (자동 재연결) ----
+    let ws = null;
+    function connect() {
+      ws = new WebSocket(`wss://${location.host}/ws/cam/${sid}`);
+      ws.onopen = () => setStatus("연결됨 — 손을 화면에 보여주세요");
+      ws.onclose = (e) => {
+        if (e.code === 4404) {
+          setStatus("만료된 세션입니다. QR을 다시 스캔하세요.");
+          return;
+        }
+        setStatus("연결 끊김 — 재연결 중…");
+        setTimeout(connect, 1000);
+      };
+    }
+    const send = (msg) => ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+
+    // ---- MediaPipe Hand Landmarker ----
+    async function createLandmarker() {
+      const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+      const opts = (delegate) => ({
+        baseOptions: { modelAssetPath: MODEL_URL, delegate },
+        runningMode: "VIDEO",
+        numHands: 1,
+      });
+      try {
+        return await HandLandmarker.createFromOptions(vision, opts("GPU"));
+      } catch {
+        return await HandLandmarker.createFromOptions(vision, opts("CPU"));
+      }
+    }
+
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      video.srcObject = stream;
+      await video.play();
+    }
+
+    function drawLandmarks(lm) {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      if (!lm) return;
+      octx.fillStyle = "#4f8cff";
+      for (const p of lm) {
+        octx.beginPath();
+        octx.arc(p.x * overlay.width, p.y * overlay.height, 5, 0, Math.PI * 2);
+        octx.fill();
+      }
+    }
+
+    async function main() {
+      setStatus("모델 로딩 중…");
+      const landmarker = await createLandmarker();
+      setStatus("카메라 시작 중…");
+      await startCamera();
+      connect();
+
+      let lastVideoTime = -1, lastSent = 0, hadHand = false;
+      const r4 = (v) => Math.round(v * 1e4) / 1e4;
+
+      function loop() {
+        const now = performance.now();
+        if (video.currentTime !== lastVideoTime) {
+          lastVideoTime = video.currentTime;
+          const res = landmarker.detectForVideo(video, now);
+          const lm = res.landmarks?.[0];
+          drawLandmarks(lm);
+
+          if (lm && now - lastSent >= SEND_INTERVAL_MS) {
+            lastSent = now;
+            hadHand = true;
+            send({
+              type: "landmarks",
+              ts: now,
+              mirrored: MIRRORED,
+              handedness: res.handedness?.[0]?.[0]?.categoryName ?? null,
+              landmarks: lm.map((p) => [r4(p.x), r4(p.y), r4(p.z)]),
+            });
+          } else if (!lm && hadHand) {
+            hadHand = false; // 손이 사라진 순간 한 번만 알림
+            send({ type: "landmarks", ts: now, mirrored: MIRRORED, landmarks: [] });
+          }
+        }
+        requestAnimationFrame(loop);
+      }
+      loop();
+    }
+
+    // iOS Safari 는 사용자 제스처 없이 카메라 재생이 막힐 수 있으므로 버튼으로 시작
+    const btn = document.getElementById("start");
+    btn.hidden = false;
+    setStatus("버튼을 눌러 시작하세요");
+    btn.onclick = () => {
+      btn.hidden = true;
+      main().catch((e) => setStatus("오류: " + e.message));
+    };
+  </script>
+</body>
+</html>
