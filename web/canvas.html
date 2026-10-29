@@ -38,7 +38,16 @@
       color: var(--mint-dark); font-weight: 700; cursor: pointer; transition: background .15s, color .15s; }
     a.btn { display: inline-block; text-decoration: none; }
     button:hover, a.btn:hover { background: var(--mint); color: #fff; }
-    button[aria-pressed="true"] { background: var(--mint); color: #fff; }
+    /* on/off 스위치: 체크박스는 숨기되 키보드 포커스는 유지 */
+    .switch { position: relative; cursor: pointer; }
+    .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+    .switch .track { position: relative; width: 40px; height: 22px; border-radius: 999px; background: #c9d6d3;
+      transition: background .2s; }
+    .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .2s; }
+    .switch input:checked + .track { background: var(--mint); }
+    .switch input:checked + .track::after { transform: translateX(18px); }
+    .switch input:focus-visible + .track { outline: 2px solid var(--mint-dark); outline-offset: 2px; }
     button:disabled { opacity: .5; cursor: default; background: #fff; color: var(--mint-dark); }
     #peer { font-size: 14px; color: #7a8f8a; }
     #peer.on { color: var(--mint-dark); font-weight: 700; }
@@ -96,14 +105,16 @@
     <label>굵기 <input id="width" type="range" min="2" max="30" value="6" /></label>
     <button id="clear">전체 지우기</button>
     <button id="save">PNG 저장</button>
-    <button id="openShare">공유하기</button>
-    <a class="btn" href="gallery.html?from=canvas">갤러리</a>
     <button id="showQr">QR</button>
     <button id="showGuide">사용방법</button>
-    <button id="toggleHand" aria-pressed="true">손 표시</button>
+    <label class="switch">손 표시
+      <input id="toggleHand" type="checkbox" role="switch" checked /><span class="track" aria-hidden="true"></span>
+    </label>
     <span class="sp"></span>
     <span id="gesture">—</span>
     <span id="peer">● 폰 대기 중</span>
+    <button id="openShare">공유하기</button>
+    <a class="btn" href="gallery.html?from=canvas">갤러리</a>
   </div>
 
   <div id="board">
@@ -376,10 +387,9 @@
     // 손 골격 표시 토글 (기본 켜짐, 브라우저에 기억)
     const $toggleHand = document.getElementById("toggleHand");
     let showHand = localStorage.getItem("canvas.showHand") !== "0";
-    $toggleHand.setAttribute("aria-pressed", showHand);
-    $toggleHand.onclick = () => {
-      showHand = !showHand;
-      $toggleHand.setAttribute("aria-pressed", showHand);
+    $toggleHand.checked = showHand;
+    $toggleHand.onchange = () => {
+      showHand = $toggleHand.checked;
       localStorage.setItem("canvas.showHand", showHand ? "1" : "0");
       if (!showHand) cctx.clearRect(0, 0, board.clientWidth, board.clientHeight);
     };
