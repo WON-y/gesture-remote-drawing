@@ -17,6 +17,7 @@ class Gesture(str, Enum):
     HOVER = "hover"  # 검지+중지: 커서만 이동
     DRAW = "draw"    # 검지만: 그리기
     ERASE = "erase"  # 손바닥 펴기: 지우개
+    SAVE = "save"    # 엄지 척: 그림 저장
 
 
 # ---- cam → gateway → c2 ----

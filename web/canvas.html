@@ -24,6 +24,10 @@
     #qr svg { width: 260px; height: 260px; }
     #qr a { font-size: 12px; word-break: break-all; color: #666; }
     #help { font-size: 13px; color: #555; text-align: left; line-height: 1.6; }
+    #toast { position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px;
+      background: rgba(0,0,0,.75); color: #fff; border-radius: 999px; font-size: 15px; z-index: 20;
+      opacity: 0; transition: opacity .3s; pointer-events: none; }
+    #toast.on { opacity: 1; }
   </style>
 </head>
 <body>
@@ -42,6 +46,7 @@
   <div id="board">
     <canvas id="paint"></canvas>
     <canvas id="cursor"></canvas>
+    <div id="toast"></div>
     <div id="qr">
       <h3>폰 카메라로 QR을 스캔하세요</h3>
       <div id="qrImg">세션 생성 중…</div>
@@ -50,7 +55,8 @@
         ☝ 검지만 펴기: 그리기<br />
         ✌ 검지+중지: 커서 이동<br />
         🖐 손바닥: 지우개<br />
-        ✊ 주먹: 대기
+        ✊ 주먹: 대기<br />
+        👍 엄지 척: 그림 저장
       </div>
     </div>
   </div>
@@ -58,6 +64,9 @@
   <script>
     const COLORS = ["#222222", "#e5484d", "#f5a623", "#30a46c", "#4f8cff", "#8e4ec6"];
     const ERASER_SIZE = 40;
+    const SAVE_COOLDOWN = 2000; // ms, 엄지 척 연속 저장 방지
+    const LOST_GRACE_MS = 300;  // 서버(c2) LOST_GRACE_MS 와 맞출 것
+    let lostTimer;
 
     const board = document.getElementById("board");
     const paint = document.getElementById("paint");
@@ -70,6 +79,21 @@
 
     let color = COLORS[0];
     let lastPt = null; // 직전 그리기 좌표 (null 이면 선 끊김)
+    let lastMid = null; // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
+    let prevGesture = "none";
+
+    // 곡선은 중점까지만 그리므로, 선이 끝날 때 마지막 점까지 마저 잇는다
+    function endStroke() {
+      if (lastPt && lastMid) {
+        pctx.globalCompositeOperation = "source-over";
+        pctx.beginPath();
+        pctx.moveTo(lastMid.x, lastMid.y);
+        pctx.lineTo(lastPt.x, lastPt.y);
+        pctx.stroke();
+      }
+      lastPt = lastMid = null;
+    }
+    let lastSave = 0;
 
     // ---- 툴바 ----
     const $colors = document.getElementById("colors");
@@ -87,12 +111,31 @@
       $colors.appendChild(s);
     });
     document.getElementById("clear").onclick = () => pctx.clearRect(0, 0, paint.width, paint.height);
-    document.getElementById("save").onclick = () => {
+    function saveDrawing() {
+      // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
+      const out = document.createElement("canvas");
+      out.width = paint.width; out.height = paint.height;
+      const octx = out.getContext("2d");
+      octx.fillStyle = "#fff";
+      octx.fillRect(0, 0, out.width, out.height);
+      octx.drawImage(paint, 0, 0);
+      const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       const a = document.createElement("a");
-      a.download = "airsketch.png";
-      a.href = paint.toDataURL("image/png");
+      a.download = `airsketch-${stamp}.png`;
+      a.href = out.toDataURL("image/png");
       a.click();
-    };
+      showToast(`💾 ${a.download} 저장됨`);
+    }
+    let toastTimer;
+    function showToast(text) {
+      const $t = document.getElementById("toast");
+      $t.textContent = text;
+      $t.classList.add("on");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => $t.classList.remove("on"), 2000);
+    }
+    document.getElementById("save").onclick = saveDrawing;
     document.getElementById("showQr").onclick = () => ($qr.hidden = !$qr.hidden);
 
     // ---- 캔버스 크기 (DPR 대응, 리사이즈 시 내용 유지) ----
@@ -113,13 +156,24 @@
     resize();
 
     // ---- 제스처 처리 ----
-    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개" };
+    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개", save: "👍 저장" };
 
     function onGesture(ev) {
       $gesture.textContent = LABEL[ev.gesture] ?? ev.gesture;
+      // 엄지 척으로 바뀌는 순간 1회 저장
+      if (ev.gesture === "save" && prevGesture !== "save" && performance.now() - lastSave > SAVE_COOLDOWN) {
+        lastSave = performance.now();
+        saveDrawing();
+      }
+      prevGesture = ev.gesture;
       const w = board.clientWidth, h = board.clientHeight;
       cctx.clearRect(0, 0, w, h);
-      if (ev.x == null) { lastPt = null; return; }
+      clearTimeout(lostTimer);
+      if (ev.x == null) {
+        // 손을 잠깐 놓친 경우: 곧 다시 그리면 같은 선으로 이어지도록 바로 끝내지 않음
+        lostTimer = setTimeout(endStroke, LOST_GRACE_MS);
+        return;
+      }
 
       const pt = { x: ev.x * w, y: ev.y * h };
       const width = +document.getElementById("width").value;
@@ -130,20 +184,29 @@
         pctx.lineWidth = width;
         pctx.lineCap = pctx.lineJoin = "round";
         pctx.beginPath();
-        const from = lastPt ?? pt;
-        pctx.moveTo(from.x, from.y);
-        pctx.lineTo(pt.x, pt.y);
+        if (!lastPt) {
+          // 시작점: 점 하나 찍기
+          pctx.moveTo(pt.x, pt.y);
+          pctx.lineTo(pt.x, pt.y);
+          lastMid = pt;
+        } else {
+          // 직전 점을 제어점으로, 중점 → 중점 2차 곡선 (꺾임 없이 이어짐)
+          const mid = { x: (lastPt.x + pt.x) / 2, y: (lastPt.y + pt.y) / 2 };
+          pctx.moveTo(lastMid.x, lastMid.y);
+          pctx.quadraticCurveTo(lastPt.x, lastPt.y, mid.x, mid.y);
+          lastMid = mid;
+        }
         pctx.stroke();
         lastPt = pt;
       } else if (ev.gesture === "erase") {
+        endStroke();
         pctx.globalCompositeOperation = "destination-out";
         pctx.beginPath();
         pctx.arc(pt.x, pt.y, ERASER_SIZE, 0, Math.PI * 2);
         pctx.fill();
         pctx.globalCompositeOperation = "source-over";
-        lastPt = null;
       } else {
-        lastPt = null;
+        endStroke();
       }
 
       // 커서
@@ -161,7 +224,7 @@
       $peer.textContent = on ? "● 폰 연결됨" : "● 폰 대기 중";
       $peer.classList.toggle("on", on);
       $qr.hidden = on;
-      if (!on) { lastPt = null; cctx.clearRect(0, 0, cursor.width, cursor.height); }
+      if (!on) { endStroke(); cctx.clearRect(0, 0, cursor.width, cursor.height); }
     }
 
     // ---- 세션 + WebSocket ----
