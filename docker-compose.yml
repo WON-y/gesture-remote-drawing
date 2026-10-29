@@ -2,6 +2,8 @@ name: airsketch
 
 services:
   edge:
+    # CD 가 main 마다 GHCR 에 배포하는 이미지. 직접 빌드(--build)하면 같은 이름으로 로컬에 만들어짐
+    image: ghcr.io/won-y/gesture-remote-drawing/edge:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: edge/Dockerfile
@@ -19,6 +21,7 @@ services:
     restart: unless-stopped
 
   c1_gateway:
+    image: ghcr.io/won-y/gesture-remote-drawing/c1_gateway:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: c1_gateway/Dockerfile
@@ -33,6 +36,7 @@ services:
     restart: unless-stopped
 
   c2_gesture:
+    image: ghcr.io/won-y/gesture-remote-drawing/c2_gesture:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: c2_gesture/Dockerfile

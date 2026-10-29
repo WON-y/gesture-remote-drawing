@@ -1,0 +1,4 @@
+-r c1_gateway/requirements.txt
+-r c2_gesture/requirements.txt
+pytest==8.3.3
+ruff==0.6.9
