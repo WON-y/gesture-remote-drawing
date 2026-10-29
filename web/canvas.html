@@ -37,6 +37,11 @@
     #peer { font-size: 14px; color: #7a8f8a; }
     #peer.on { color: var(--mint-dark); font-weight: 700; }
     #gesture { font-size: 14px; min-width: 70px; font-weight: 700; color: var(--mint-dark); }
+    /* 참여자: 플레이어 색 점, 폰 미연결이면 흐리게, 나는 테두리 */
+    #players { display: flex; gap: 6px; align-items: center; }
+    #players .pl { width: 14px; height: 14px; border-radius: 50%; background: var(--c); opacity: .35; }
+    #players .pl.cam { opacity: 1; }
+    #players .pl.me { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--c); }
     #board { position: absolute; top: var(--bar); left: 0; right: 0; bottom: 0; }
     #board canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     #paint { background: #fff; }
@@ -82,9 +87,11 @@
     <button id="clear">전체 지우기</button>
     <button id="save">PNG 저장</button>
     <button id="showQr">QR</button>
+    <button id="invite">친구 초대</button>
     <button id="showGuide">사용방법</button>
     <span class="sp"></span>
     <span id="gesture">—</span>
+    <span id="players" title="참여자 (흐린 점: 폰 미연결)"></span>
     <span id="peer">● 폰 대기 중</span>
   </div>
 
@@ -116,16 +123,20 @@
         <li><span class="ico">👍</span><span><b>엄지 척</b> — 그림 저장</span></li>
         <li><span class="ico">🤘</span><span><b>검지+새끼 1초 유지</b> — 전체 지우기</span></li>
         <li><span class="ico">🎨</span><span><b>검지·중지 붙이고 흔들기</b> — 색상 창, 붙인 채 좌우로 색 선택</span></li>
+        <li><span class="ico">👥</span><span><b>친구 초대</b> — 링크를 보내면 같은 그림판에 함께 그리기</span></li>
       </ul>
     </div>
   </div>
 
   <script>
     const COLORS = ["#222222", "#e5484d", "#f5a623", "#30a46c", "#4f8cff", "#8e4ec6"];
+    const DEFAULT_WIDTH = 6;
     const ERASER_SIZE = 40;
     const ACTION_COOLDOWN = 2000; // ms, 손을 잠깐 놓쳤다 찾을 때 같은 동작이 다시 실행되는 것 방지
     const LOST_GRACE_MS = 300;  // 서버(c2) LOST_GRACE_MS 와 맞출 것
-    let lostTimer;
+    // MediaPipe 손 랜드마크 연결선 (손목 0 → 각 손가락)
+    const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 
     const board = document.getElementById("board");
     const paint = document.getElementById("paint");
@@ -135,24 +146,51 @@
     const $peer = document.getElementById("peer");
     const $gesture = document.getElementById("gesture");
     const $qr = document.getElementById("qr");
+    const $width = document.getElementById("width");
+    const $players = document.getElementById("players");
 
-    let colorIdx = 0;
-    let color = COLORS[0];
-    let lastPt = null; // 직전 그리기 좌표 (null 이면 선 끊김)
-    let lastMid = null; // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
-    let lastErase = null; // 직전 지우개 좌표 (null 이면 끊김)
-    let prevGesture = "none";
+    // ---- 방 / 플레이어 ----
+    let roomId = new URLSearchParams(location.search).get("room");
+    let me = null;            // 내 플레이어 ID
+    let inviteUrl = "";
+    let ws = null;
+    let players = [];         // 서버가 보내 준 참여자 목록 [{id, color, cam, canvas}]
+    let myCam = false;
+    let renderPending = false; // 커서 레이어 다시 그리기 예약 여부 (resize() 가 바로 쓰므로 위에 선언)
+    const send = (msg) => ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+
+    // 플레이어별 펜 상태. 모든 그림판이 같은 이벤트를 같은 순서로 받아 똑같이 그린다
+    const pens = new Map();
+    function pen(id) {
+      let p = pens.get(id);
+      if (!p) {
+        p = {
+          colorIdx: 0, width: DEFAULT_WIDTH,
+          lastPt: null,    // 직전 그리기 좌표 (null 이면 선 끊김)
+          lastMid: null,   // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
+          lastErase: null, // 직전 지우개 좌표 (null 이면 끊김)
+          prevGesture: "none", lastAction: {}, lostTimer: null,
+          hand: null,      // 커서 레이어에 그릴 최신 손 {pt, gesture, landmarks, hold}
+        };
+        pens.set(id, p);
+      }
+      return p;
+    }
+    const playerColor = (id) => players.find((q) => q.id === id)?.color ?? "#999";
 
     // 곡선은 중점까지만 그리므로, 선이 끝날 때 마지막 점까지 마저 잇는다
-    function endStroke() {
-      if (lastPt && lastMid) {
+    function endStroke(p) {
+      if (p.lastPt && p.lastMid) {
         pctx.globalCompositeOperation = "source-over";
+        pctx.strokeStyle = COLORS[p.colorIdx];
+        pctx.lineWidth = p.width;
+        pctx.lineCap = pctx.lineJoin = "round";
         pctx.beginPath();
-        pctx.moveTo(lastMid.x, lastMid.y);
-        pctx.lineTo(lastPt.x, lastPt.y);
+        pctx.moveTo(p.lastMid.x, p.lastMid.y);
+        pctx.lineTo(p.lastPt.x, p.lastPt.y);
         pctx.stroke();
       }
-      lastPt = lastMid = lastErase = null;
+      p.lastPt = p.lastMid = p.lastErase = null;
     }
     // ---- 툴바 ----
     const $colors = document.getElementById("colors");
@@ -163,26 +201,28 @@
       const s = document.createElement("div");
       s.className = "swatch" + (i === 0 ? " on" : "");
       s.style.background = c;
-      s.onclick = () => setColor(i);
+      s.onclick = () => send({ type: "pen", color_idx: i });
       $colors.appendChild(s);
       const chip = document.createElement("div");
       chip.className = "chip" + (i === 0 ? " on" : "");
       chip.style.background = c;
       $palette.querySelector(".row").appendChild(chip);
     });
-    // 툴바 색상과 제스처 색상 창이 같은 선택을 공유
-    function setColor(i) {
-      colorIdx = (i + COLORS.length) % COLORS.length;
-      color = COLORS[colorIdx];
+    $width.oninput = () => send({ type: "pen", width: +$width.value });
+    // 툴바 색상과 제스처 색상 창이 같은 선택(내 펜)을 공유
+    function renderMyPen() {
+      if (!me) return;
+      const p = pen(me);
       for (const sel of [".swatch", "#palette .chip"]) {
-        document.querySelectorAll(sel).forEach((e, k) => e.classList.toggle("on", k === colorIdx));
+        document.querySelectorAll(sel).forEach((e, k) => e.classList.toggle("on", k === p.colorIdx));
       }
+      $width.value = p.width;
     }
     function clearAll() {
-      endStroke();
+      for (const p of pens.values()) endStroke(p);
       pctx.clearRect(0, 0, paint.width, paint.height);
     }
-    document.getElementById("clear").onclick = clearAll;
+    document.getElementById("clear").onclick = () => send({ type: "clear" });
     function saveDrawing() {
       // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
       const out = document.createElement("canvas");
@@ -209,6 +249,15 @@
     }
     document.getElementById("save").onclick = saveDrawing;
     document.getElementById("showQr").onclick = () => ($qr.hidden = !$qr.hidden);
+    document.getElementById("invite").onclick = async () => {
+      if (!inviteUrl) return;
+      try {
+        await navigator.clipboard.writeText(inviteUrl);
+        showToast("👥 초대 링크 복사됨 — 친구에게 보내세요");
+      } catch {
+        prompt("초대 링크를 복사해 친구에게 보내세요", inviteUrl);
+      }
+    };
     // 사용방법 창: 버튼/✕/바깥 클릭/Esc 로 열고 닫기
     const $guide = document.getElementById("guide");
     document.getElementById("showGuide").onclick = () => ($guide.hidden = false);
@@ -229,69 +278,128 @@
         c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
       }
       pctx.drawImage(tmp, 0, 0, w, h);
+      requestRender();
     }
     window.addEventListener("resize", resize);
     resize();
 
+    // ---- 커서 레이어: 모든 플레이어의 손 골격 + 커서 (플레이어 색) ----
+    // cursor 레이어에만 그림 → 매 프레임 지워지고 PNG 저장에도 안 들어감
+    function requestRender() {
+      if (renderPending) return;
+      renderPending = true;
+      requestAnimationFrame(renderCursors);
+    }
+    function drawHand(lm, w, h, color) {
+      if (!lm) return;
+      cctx.strokeStyle = color;
+      cctx.globalAlpha = 0.5;
+      cctx.lineWidth = 2;
+      cctx.beginPath();
+      for (const [a, b] of HAND_CONNECTIONS) {
+        cctx.moveTo(lm[a][0] * w, lm[a][1] * h);
+        cctx.lineTo(lm[b][0] * w, lm[b][1] * h);
+      }
+      cctx.stroke();
+      cctx.globalAlpha = 1;
+      cctx.fillStyle = color;
+      for (const [x, y] of lm) {
+        cctx.beginPath();
+        cctx.arc(x * w, y * h, 3, 0, Math.PI * 2);
+        cctx.fill();
+      }
+    }
+    function renderCursors() {
+      renderPending = false;
+      const w = board.clientWidth, h = board.clientHeight;
+      cctx.clearRect(0, 0, w, h);
+      for (const [id, p] of pens) {
+        const hand = p.hand;
+        if (!hand) continue;
+        const color = playerColor(id);
+        drawHand(hand.landmarks, w, h, color);
+        const { pt } = hand;
+        const r = hand.gesture === "erase" ? ERASER_SIZE : Math.max(p.width / 2, 4);
+        cctx.beginPath();
+        cctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        cctx.strokeStyle = hand.gesture === "draw" ? COLORS[p.colorIdx] : color;
+        cctx.lineWidth = 2;
+        cctx.stroke();
+        // 길게 유지해야 하는 제스처 진행률: 커서 둘레 원호
+        if (hand.hold) {
+          cctx.beginPath();
+          cctx.arc(pt.x, pt.y, r + 10, -Math.PI / 2, -Math.PI / 2 + hand.hold * Math.PI * 2);
+          cctx.strokeStyle = color;
+          cctx.lineWidth = 4;
+          cctx.stroke();
+        }
+      }
+    }
+
     // ---- 제스처 처리 ----
     const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🤏 지우개", save: "👍 저장",
       clear: "🤘 전체 지우기", palette: "🎨 색상 선택" };
-    // 해당 제스처로 바뀌는 순간 1회 실행
+    // 해당 제스처로 바뀌는 순간 1회 실행. 저장은 제스처를 한 사람의 PC 에서만, 지우기는 공유 그림이라 모두
     const ACTIONS = {
-      save: saveDrawing,
+      save: (mine) => mine && saveDrawing(),
       clear: () => { clearAll(); showToast("🧹 전체 지움"); },
     };
-    const lastAction = {};
 
     function onGesture(ev) {
-      $gesture.textContent = LABEL[ev.gesture] ?? ev.gesture;
+      if (!ev.player) return;
+      const p = pen(ev.player);
+      const mine = ev.player === me;
       const g = ev.gesture;
+      if (mine) $gesture.textContent = LABEL[g] ?? g;
       const now = performance.now();
-      if (ACTIONS[g] && prevGesture !== g && now - (lastAction[g] ?? -Infinity) > ACTION_COOLDOWN) {
-        lastAction[g] = now;
-        ACTIONS[g]();
+      if (ACTIONS[g] && p.prevGesture !== g && now - (p.lastAction[g] ?? -Infinity) > ACTION_COOLDOWN) {
+        p.lastAction[g] = now;
+        ACTIONS[g](mine);
       }
-      prevGesture = g;
-      const w = board.clientWidth, h = board.clientHeight;
-      cctx.clearRect(0, 0, w, h);
-      clearTimeout(lostTimer);
+      p.prevGesture = g;
+      clearTimeout(p.lostTimer);
       if (ev.x == null) {
+        p.hand = null;
+        requestRender();
         // 손을 잠깐 놓친 경우: 곧 다시 그리면 같은 선으로 이어지도록 바로 끝내지 않음
-        lostTimer = setTimeout(() => { endStroke(); $palette.hidden = true; }, LOST_GRACE_MS);
+        p.lostTimer = setTimeout(() => { endStroke(p); if (mine) $palette.hidden = true; }, LOST_GRACE_MS);
         return;
       }
 
       // 색상 창: palette 동안 열어두고 스와이프마다 한 칸, 다른 손 모양이 되면 닫힘(선택 확정)
-      $palette.hidden = g !== "palette";
-      if (ev.swipe) setColor(colorIdx + ev.swipe);
+      if (mine) $palette.hidden = g !== "palette";
+      if (ev.swipe) {
+        p.colorIdx = (((p.colorIdx + ev.swipe) % COLORS.length) + COLORS.length) % COLORS.length;
+        if (mine) renderMyPen();
+      }
 
+      const w = board.clientWidth, h = board.clientHeight;
       const pt = { x: ev.x * w, y: ev.y * h };
-      const width = +document.getElementById("width").value;
 
-      if (ev.gesture === "draw") {
+      if (g === "draw") {
         pctx.globalCompositeOperation = "source-over";
-        pctx.strokeStyle = color;
-        pctx.lineWidth = width;
+        pctx.strokeStyle = COLORS[p.colorIdx];
+        pctx.lineWidth = p.width;
         pctx.lineCap = pctx.lineJoin = "round";
         pctx.beginPath();
-        if (!lastPt) {
+        if (!p.lastPt) {
           // 시작점: 점 하나 찍기
           pctx.moveTo(pt.x, pt.y);
           pctx.lineTo(pt.x, pt.y);
-          lastMid = pt;
+          p.lastMid = pt;
         } else {
           // 직전 점을 제어점으로, 중점 → 중점 2차 곡선 (꺾임 없이 이어짐)
-          const mid = { x: (lastPt.x + pt.x) / 2, y: (lastPt.y + pt.y) / 2 };
-          pctx.moveTo(lastMid.x, lastMid.y);
-          pctx.quadraticCurveTo(lastPt.x, lastPt.y, mid.x, mid.y);
-          lastMid = mid;
+          const mid = { x: (p.lastPt.x + pt.x) / 2, y: (p.lastPt.y + pt.y) / 2 };
+          pctx.moveTo(p.lastMid.x, p.lastMid.y);
+          pctx.quadraticCurveTo(p.lastPt.x, p.lastPt.y, mid.x, mid.y);
+          p.lastMid = mid;
         }
         pctx.stroke();
-        lastPt = pt;
-      } else if (ev.gesture === "erase") {
-        if (lastPt) endStroke(); // 그리던 선만 마무리 (지우개 연결점은 유지)
+        p.lastPt = pt;
+      } else if (g === "erase") {
+        if (p.lastPt) endStroke(p); // 그리던 선만 마무리 (지우개 연결점은 유지)
         // 프레임마다 원만 찍으면 빠르게 움직일 때 원 사이가 비므로, 직전 점과 굵은 선으로 잇는다
-        const from = lastErase ?? pt;
+        const from = p.lastErase ?? pt;
         pctx.globalCompositeOperation = "destination-out";
         pctx.lineWidth = ERASER_SIZE * 2;
         pctx.lineCap = pctx.lineJoin = "round";
@@ -300,61 +408,120 @@
         pctx.lineTo(pt.x, pt.y);
         pctx.stroke();
         pctx.globalCompositeOperation = "source-over";
-        lastErase = pt;
+        p.lastErase = pt;
       } else {
-        endStroke();
+        endStroke(p);
       }
 
-      // 커서
-      const r = ev.gesture === "erase" ? ERASER_SIZE : Math.max(width / 2, 4);
-      cctx.beginPath();
-      cctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-      cctx.strokeStyle = ev.gesture === "draw" ? color : "#999";
-      cctx.lineWidth = 2;
-      cctx.stroke();
+      p.hand = { pt, gesture: g, landmarks: ev.landmarks, hold: ev.hold };
+      requestRender();
+    }
 
-      // 길게 유지해야 하는 제스처 진행률: 커서 둘레 원호
-      if (ev.hold) {
-        cctx.beginPath();
-        cctx.arc(pt.x, pt.y, r + 10, -Math.PI / 2, -Math.PI / 2 + ev.hold * Math.PI * 2);
-        cctx.strokeStyle = "#2ec4a6";
-        cctx.lineWidth = 4;
-        cctx.stroke();
+    function onPen(ev) {
+      const p = pen(ev.player);
+      if (ev.color_idx != null) p.colorIdx = ev.color_idx % COLORS.length;
+      if (ev.width != null) p.width = ev.width;
+      if (ev.player === me) renderMyPen();
+    }
+
+    function onPlayers(ev) {
+      players = ev.players;
+      for (const [id, p] of pens) {
+        const q = players.find((x) => x.id === id);
+        if (!q || !q.cam) { endStroke(p); p.hand = null; }
+        if (!q) pens.delete(id);
       }
+      $players.replaceChildren(...players.map((q) => {
+        const dot = document.createElement("span");
+        dot.className = "pl" + (q.cam ? " cam" : "") + (q.id === me ? " me" : "");
+        dot.style.setProperty("--c", q.color);
+        dot.title = (q.id === me ? "나" : "친구") + (q.cam ? "" : " (폰 미연결)");
+        return dot;
+      }));
+      const cam = !!players.find((q) => q.id === me)?.cam;
+      if (cam !== myCam) {
+        myCam = cam;
+        $peer.textContent = cam ? "● 폰 연결됨" : "● 폰 대기 중";
+        $peer.classList.toggle("on", cam);
+        $qr.hidden = cam;
+        if (!cam) $palette.hidden = true;
+      }
+      requestRender();
     }
 
-    function onPeer(ev) {
-      if (ev.role !== "cam") return;
-      const on = ev.state === "joined";
-      $peer.textContent = on ? "● 폰 연결됨" : "● 폰 대기 중";
-      $peer.classList.toggle("on", on);
-      $qr.hidden = on;
-      if (!on) { endStroke(); $palette.hidden = true; cctx.clearRect(0, 0, cursor.width, cursor.height); }
+    // 늦게 들어온 그림판에 현재 그림과 펜 상태를 보내 줌
+    function onSnapshotRequest(ev) {
+      const penStates = {};
+      for (const [id, p] of pens) penStates[id] = { color_idx: p.colorIdx, width: p.width };
+      send({ type: "snapshot", to: ev.to, image: paint.toDataURL("image/png"), pens: penStates });
+    }
+    function onSnapshot(ev) {
+      for (const [id, s] of Object.entries(ev.pens)) onPen({ player: id, ...s });
+      const img = new Image();
+      img.onload = () => {
+        // 입장 후 이미 그려진 선이 덮이지 않도록 기존 그림 아래에 깔기
+        pctx.save();
+        pctx.globalCompositeOperation = "destination-over";
+        pctx.drawImage(img, 0, 0, board.clientWidth, board.clientHeight);
+        pctx.restore();
+      };
+      img.src = ev.image;
     }
 
-    // ---- 세션 + WebSocket ----
+    // ---- 방 입장 + WebSocket ----
+    function fail(text) {
+      document.getElementById("qrImg").innerHTML = "";
+      document.getElementById("qrImg").textContent = text;
+      const a = document.createElement("a");
+      a.href = "/canvas.html";
+      a.textContent = "새 방 만들기";
+      document.getElementById("qrImg").append(document.createElement("br"), a);
+      $qr.hidden = false;
+    }
     async function start() {
-      const res = await fetch("/api/session", { method: "POST" });
+      if (!roomId) {
+        const res = await fetch("/api/session", { method: "POST" });
+        roomId = (await res.json()).session_id;
+        history.replaceState(null, "", `?room=${roomId}`); // 새로고침해도 같은 방
+      }
+      // 새로고침 시 같은 플레이어 자리(색·폰 연결)를 이어 쓰기
+      const key = `airsketch:${roomId}`;
+      let saved = null;
+      try { saved = sessionStorage.getItem(key); } catch {}
+      const res = await fetch(`/api/session/${roomId}/players${saved ? `?player=${encodeURIComponent(saved)}` : ""}`,
+        { method: "POST" });
+      if (res.status === 404) return fail("방이 없거나 만료되었습니다.");
+      if (res.status === 409) return fail("방이 가득 찼습니다.");
       const info = await res.json();
+      me = info.player_id;
+      inviteUrl = info.invite_url;
+      try { sessionStorage.setItem(key, me); } catch {}
+      pen(me);
+      renderMyPen();
       document.getElementById("qrImg").innerHTML = info.qr_svg;
       const $a = document.getElementById("camUrl");
       $a.href = $a.textContent = info.cam_url;
 
       const connect = () => {
-        const ws = new WebSocket(`wss://${location.host}/ws/canvas/${info.session_id}`);
+        ws = new WebSocket(`wss://${location.host}/ws/canvas/${roomId}/${me}`);
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
           if (msg.type === "gesture") onGesture(msg);
-          else if (msg.type === "peer") onPeer(msg);
+          else if (msg.type === "players") onPlayers(msg);
+          else if (msg.type === "pen") onPen(msg);
+          else if (msg.type === "clear") { clearAll(); showToast("🧹 전체 지움"); }
+          else if (msg.type === "snapshot_request") onSnapshotRequest(msg);
+          else if (msg.type === "snapshot") onSnapshot(msg);
         };
         ws.onclose = (e) => {
-          if (e.code === 4409) return; // 다른 탭이 이 세션을 가져감
+          if (e.code === 4409) return; // 다른 탭이 이 자리를 가져감
+          if (e.code === 4404) return fail("방이 없거나 만료되었습니다.");
           setTimeout(connect, 1000);
         };
       };
       connect();
     }
-    start().catch((e) => (document.getElementById("qrImg").textContent = "세션 생성 실패: " + e.message));
+    start().catch((e) => fail("세션 생성 실패: " + e.message));
   </script>
 </body>
 </html>

@@ -18,6 +18,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Cloudflare Tunnel: 외부(인터넷)에서 접속할 때만 profile 로 켬. edge:8081 로 연결.
+  # 임시 주소(계정·도메인 불필요, 실행마다 바뀜): docker compose --profile quick-tunnel up -d
+  tunnel-quick:
+    image: cloudflare/cloudflared:2025.8.1
+    command: tunnel --no-autoupdate --url http://edge:8081
+    depends_on:
+      - edge
+    restart: unless-stopped
+    profiles: [quick-tunnel]
+
+  # 고정 주소(Cloudflare 도메인 + Zero Trust 터널 토큰): docker compose --profile tunnel up -d
+  tunnel:
+    image: cloudflare/cloudflared:2025.8.1
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}   # 비어 있으면 cloudflared 가 시작하지 못함
+    depends_on:
+      - edge
+    restart: unless-stopped
+    profiles: [tunnel]
+
   c1_gateway:
     build:
       context: .
@@ -27,6 +48,7 @@ services:
       HTTPS_PORT: ${HTTPS_PORT:-443}
       C2_URL: ws://c2_gesture:8001
       SESSION_TTL: ${SESSION_TTL:-3600}
+      PLAYER_IDLE_SEC: ${PLAYER_IDLE_SEC:-300}
     depends_on:
       c2_gesture:
         condition: service_healthy
