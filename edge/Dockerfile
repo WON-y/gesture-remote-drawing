@@ -2,6 +2,7 @@
 FROM nginx:1.27-alpine
 
 COPY edge/templates /etc/nginx/templates
+COPY edge/snippets /etc/nginx/snippets
 COPY web /usr/share/nginx/html
 
 # 인증서는 docker-compose 에서 ./edge/certs 를 /etc/nginx/certs 로 마운트

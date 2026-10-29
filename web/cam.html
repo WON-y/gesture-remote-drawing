@@ -42,14 +42,18 @@
     const SEND_INTERVAL_MS = 1000 / 30;
     const MIRRORED = true; // 전면 카메라
 
-    const sid = new URLSearchParams(location.search).get("s");
+    const params = new URLSearchParams(location.search);
+    const sid = params.get("s");
+    const pid = params.get("p"); // 방 안에서 내 플레이어 ID (그림판 QR 에 포함)
+    // 그림판에 표시되는 내 손 색과 맞춤
+    const HAND_COLOR = /^[0-9a-f]{6}$/i.test(params.get("c") ?? "") ? `#${params.get("c")}` : "#2ec4a6";
     const $status = document.getElementById("status");
     const video = document.getElementById("video");
     const overlay = document.getElementById("overlay");
     const octx = overlay.getContext("2d");
     const setStatus = (t) => ($status.textContent = t);
 
-    if (!sid) {
+    if (!sid || !pid) {
       setStatus("세션 정보가 없습니다. PC 화면의 QR을 다시 스캔하세요.");
       throw new Error("no session");
     }
@@ -57,7 +61,7 @@
     // ---- WebSocket (자동 재연결) ----
     let ws = null;
     function connect() {
-      ws = new WebSocket(`wss://${location.host}/ws/cam/${sid}`);
+      ws = new WebSocket(`wss://${location.host}/ws/cam/${sid}/${pid}`);
       ws.onopen = () => setStatus("연결됨 — 손을 화면에 보여주세요");
       ws.onclose = (e) => {
         if (e.code === 4404) {
@@ -102,7 +106,7 @@
       overlay.height = video.videoHeight;
       octx.clearRect(0, 0, overlay.width, overlay.height);
       if (!lm) return;
-      octx.fillStyle = "#2ec4a6";
+      octx.fillStyle = HAND_COLOR;
       for (const p of lm) {
         octx.beginPath();
         octx.arc(p.x * overlay.width, p.y * overlay.height, 5, 0, Math.PI * 2);

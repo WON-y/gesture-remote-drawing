@@ -1,26 +1,28 @@
 # AirSketch 설계
 
 폰 카메라로 손을 인식해 PC 브라우저 그림판에 허공 제스처로 그림을 그린다.
+한 방(세션)에 최대 6명이 각자 자기 PC 그림판 + 폰으로 들어와 같은 그림을 함께 그린다.
 
 ## 구성
 
 ```
- [폰] cam.html                       [PC] canvas.html
-  MediaPipe Hand Landmarker (JS)       그림판 + QR
-        │ wss /ws/cam/{sid}                ▲ wss /ws/canvas/{sid}
-        ▼                                  │
+ [폰] cam.html                       [PC] canvas.html (플레이어마다 1개)
+  MediaPipe Hand Landmarker (JS)       그림판 + 내 폰용 QR
+        │ wss /ws/cam/{sid}/{pid}          ▲ wss /ws/canvas/{sid}/{pid}
+        ▼                                  │  (방의 모든 플레이어 제스처 수신)
  ┌──────────────── edge (Nginx, HTTPS) ────────────────┐
  │  /            → web/ 정적 파일                       │
  │  /api, /ws    → c1_gateway:8000                     │
  └─────────────────────────────────────────────────────┘
         │
-   c1_gateway (FastAPI)  ── ws /ws/{sid} ──▶  c2_gesture (FastAPI)
-   세션·QR 발급, 중계     ◀── GestureEvent ──  제스처 판정 + 스무딩
+   c1_gateway (FastAPI)  ── ws /ws/{sid}-{pid} ──▶  c2_gesture (FastAPI)
+   방·플레이어·QR 발급,  ◀──── GestureEvent ─────  제스처 판정 + 스무딩
+   방 전체로 브로드캐스트                            (폰 연결마다 엔진 1개)
 ```
 
 | 폴더 | 역할 |
 |---|---|
-| `c1_gateway/` | `POST /api/session` 으로 세션 ID + QR(SVG) 발급, cam ↔ c2 ↔ canvas WebSocket 중계 |
+| `c1_gateway/` | 방 생성, 플레이어 입장(색 배정 + 폰용 QR 발급), cam → c2 → 방의 모든 canvas 중계, 펜/지우기/스냅샷 브로드캐스트 |
 | `c2_gesture/` | 21개 랜드마크 → 제스처 판정, One Euro Filter 로 좌표 스무딩, 디바운스 |
 | `web/` | `cam.html`(폰, MediaPipe JS), `canvas.html`(PC, 그림판) |
 | `edge/` | Nginx. TLS 종료 (폰은 HTTPS 에서만 카메라 허용), 정적 파일 + 프록시 |
@@ -32,11 +34,26 @@
 
 ## 흐름
 
-1. PC 에서 `https://<PC IP>:<포트>/` 접속 → `canvas.html` 이 세션 생성, QR 표시
-2. 폰으로 QR 스캔 → `cam.html?s=<sid>` → 카메라 + Hand Landmarker 실행
-3. 폰이 프레임마다 `LandmarkFrame` 전송 (최대 30fps, 손이 사라지면 빈 배열 1회)
-4. gateway 가 c2 로 전달 → c2 가 `GestureEvent` 반환 → gateway 가 그림판으로 전달
-5. 폰 연결/해제 시 그림판에 `PeerEvent` 전송 (연결되면 QR 숨김)
+1. 방장: `https://<주소>/` 접속 → `canvas.html` 이 방 생성(`POST /api/session`), 주소가 `canvas.html?room=<sid>` 로 바뀜
+2. 친구: 방장이 "친구 초대"로 복사한 `canvas.html?room=<sid>` 접속
+3. 각 그림판이 플레이어로 입장(`POST /api/session/{sid}/players`) → 플레이어 ID·색 배정, 자기 폰용 QR 표시.
+   플레이어 ID 는 sessionStorage 에 저장해 새로고침해도 같은 자리(색·폰 연결) 유지 (`PLAYER_IDLE_SEC` 동안)
+4. 각자 폰으로 자기 QR 스캔 → `cam.html?s=<sid>&p=<pid>&c=<색>` → 카메라 + Hand Landmarker 실행
+5. 폰이 프레임마다 `LandmarkFrame` 전송 (최대 30fps, 손이 사라지면 빈 배열 1회)
+6. gateway 가 c2 로 전달 → c2 가 `GestureEvent` 반환 → gateway 가 `player` 를 붙여 **방의 모든 그림판**으로 전달
+7. 입장/퇴장/폰 연결이 바뀌면 모든 그림판에 `PlayersEvent` 전송 (내 폰이 연결되면 QR 숨김)
+
+### 함께 그리기 동기화
+
+- 그림 자체는 서버에 저장하지 않는다. 모든 그림판이 같은 이벤트를 같은 순서로 받아 **각자 똑같이 그린다**
+  (좌표가 0~1 정규화라 화면 크기가 달라도 됨)
+- 그림판은 플레이어별 펜 상태(색, 굵기, 그리던 선, 지우개 연결점)를 따로 관리
+- 툴바 색/굵기/전체 지우기는 그림판 → gateway → 방 전체(보낸 쪽 포함)로 돌아온 뒤 적용해 순서를 맞춤.
+  제스처 색상 창(swipe)과 🤘 전체 지우기는 GestureEvent 를 받은 각 그림판이 직접 반영
+- 👍 저장은 제스처를 한 사람의 PC 에서만 다운로드
+- 늦게 들어온 그림판: gateway 가 기존 그림판 하나에 `snapshot_request` → 기존 그림판이 현재 그림 PNG + 펜 상태를
+  `snapshot` 으로 보냄 → 새 그림판은 입장 후 그려진 선 **아래에** 깔아 합침
+- 손 골격·커서는 플레이어 색으로 커서 레이어에만 그림 (PNG 저장에 안 들어감). 폰 화면의 랜드마크 점도 같은 색
 
 ## 메시지 규격 (`common/schema.py`)
 
@@ -44,13 +61,20 @@
 // cam → c2
 {"type":"landmarks","ts":1234.5,"mirrored":true,"handedness":"Right",
  "landmarks":[[x,y,z], ... 21개]}          // 손 없음 = []
-// c2 → canvas
-{"type":"gesture","gesture":"draw","x":0.62,"y":0.37,"ts":1234.5}
-// gateway → canvas
-{"type":"peer","role":"cam","state":"joined"}
+// c2 → gateway → 방의 모든 canvas (player 는 gateway 가 채움)
+{"type":"gesture","gesture":"draw","x":0.62,"y":0.37,"ts":1234.5,"landmarks":[[x,y],...],"player":"aB3x_9"}
+// gateway → 방의 모든 canvas
+{"type":"players","players":[{"id":"aB3x_9","color":"#e5484d","cam":true,"canvas":true}, ...]}
+// canvas → gateway → 방의 모든 canvas (player 는 gateway 가 보낸 쪽으로 덮어씀)
+{"type":"pen","color_idx":3,"width":8,"player":"aB3x_9"}
+{"type":"clear","player":"aB3x_9"}
+// gateway → 기존 canvas / 기존 canvas → gateway → 새 canvas
+{"type":"snapshot_request","to":"<새 pid>"}
+{"type":"snapshot","to":"<새 pid>","image":"data:image/png;base64,...","pens":{"<pid>":{"color_idx":0,"width":6}}}
 ```
 
-WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연결로 교체됨.
+WebSocket 종료 코드: `4404` 없는 방/플레이어, `4409` 같은 플레이어의 새 연결로 교체됨.
+REST: `409` 방이 가득 참 (최대 6명 = 플레이어 색 개수).
 
 ## 제스처
 

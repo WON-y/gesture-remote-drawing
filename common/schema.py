@@ -4,7 +4,7 @@
 JS 쪽(web/*.html)도 이 규격을 그대로 따른다.
 """
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -52,17 +52,74 @@ class GestureEvent(BaseModel):
     hold: float | None = None
     # palette 중 좌우 스와이프 한 칸: -1 왼쪽, 1 오른쪽
     swipe: int | None = None
+    # 이 제스처를 만든 플레이어. c2 는 비워 두고 gateway 가 채워서 방의 모든 그림판에 보냄
+    player: str | None = None
 
 
-# ---- gateway → canvas ----
-class PeerEvent(BaseModel):
-    type: Literal["peer"] = "peer"
-    role: Literal["cam", "canvas"]
-    state: Literal["joined", "left"]
+# ---- gateway → 방의 모든 canvas: 참여자 목록 (입장/퇴장/폰 연결이 바뀔 때마다) ----
+class PlayerState(BaseModel):
+    id: str
+    color: str  # 손·커서 표시 색 (플레이어마다 다름)
+    cam: bool  # 폰 연결 여부
+    canvas: bool  # 그림판 연결 여부
 
 
-# ---- REST: POST /api/session ----
+class PlayersEvent(BaseModel):
+    type: Literal["players"] = "players"
+    players: list[PlayerState]
+
+
+# ---- canvas → gateway → 방의 모든 canvas ----
+# player 는 gateway 가 보낸 쪽 기준으로 덮어씀 (클라이언트 값은 무시)
+class PenEvent(BaseModel):
+    """툴바에서 펜 색/굵기를 바꿈. 제스처 색상 창(swipe)은 GestureEvent 로 각 그림판이 직접 반영."""
+    type: Literal["pen"] = "pen"
+    player: str | None = None
+    color_idx: int | None = Field(None, ge=0, le=63)
+    width: int | None = Field(None, ge=2, le=30)
+
+
+class ClearEvent(BaseModel):
+    """툴바의 전체 지우기 버튼. 🤘 제스처는 GestureEvent 로 각 그림판이 직접 처리."""
+    type: Literal["clear"] = "clear"
+    player: str | None = None
+
+
+class PenState(BaseModel):
+    color_idx: int = Field(ge=0, le=63)
+    width: int = Field(ge=2, le=30)
+
+
+# ---- 늦게 들어온 그림판 동기화 ----
+# gateway → 기존 canvas: SnapshotRequest(to=새 플레이어)
+# 기존 canvas → gateway → 새 canvas: Snapshot(현재 그림 PNG + 펜 상태)
+class SnapshotRequest(BaseModel):
+    type: Literal["snapshot_request"] = "snapshot_request"
+    to: str
+
+
+class Snapshot(BaseModel):
+    type: Literal["snapshot"] = "snapshot"
+    to: str
+    image: str = Field(pattern=r"^data:image/png;base64,", max_length=8_000_000)
+    pens: dict[str, PenState] = Field(default_factory=dict)
+
+
+CanvasMessage = Annotated[PenEvent | ClearEvent | Snapshot, Field(discriminator="type")]
+
+
+# ---- REST ----
 class SessionInfo(BaseModel):
+    """POST /api/session: 방 생성"""
     session_id: str
+    invite_url: str  # 친구에게 보낼 그림판 링크
+
+
+class PlayerInfo(BaseModel):
+    """POST /api/session/{sid}/players: 방에 플레이어로 입장 (자기 폰 연결용 QR 발급)"""
+    session_id: str
+    player_id: str
+    color: str
     cam_url: str
     qr_svg: str
+    invite_url: str
