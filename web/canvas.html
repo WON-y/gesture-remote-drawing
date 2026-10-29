@@ -34,7 +34,10 @@
     #toolbar .sp { flex: 1 1 0; }
     .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #bbb; cursor: pointer; }
     .swatch.on { box-shadow: 0 0 0 3px var(--accent); }
-    button, a.btn { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
+    #brushes { display: flex; gap: 6px; }
+    #brushes button { padding: 4px 12px; }
+    #brushes button.on { background: var(--mint); color: #fff; }
+    button { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
       color: var(--mint-dark); font-weight: 700; cursor: pointer; transition: background .15s, color .15s; }
     a.btn { display: inline-block; text-decoration: none; }
     button:hover, a.btn:hover { background: var(--mint); color: #fff; }
@@ -107,6 +110,7 @@
   <div id="toolbar">
     <strong>Team5</strong>
     <div id="colors"></div>
+    <div id="brushes"></div>
     <label>굵기 <input id="width" type="range" min="2" max="30" value="6" /></label>
     <button id="clear">전체 지우기</button>
     <button id="save">PNG 저장</button>
@@ -136,7 +140,8 @@
       <h3>폰 카메라로 QR을 스캔하세요</h3>
       <div id="qrImg">세션 생성 중…</div>
       <a id="camUrl" target="_blank"></a>
-      <div id="credit">This creation was designed using Amorepacific's Arita Font.</div>
+      <div class="credit">This creation was designed using Amorepacific's Arita Font.<br />
+        <a href="https://www.brusheezy.com">Brushes by Brusheezy!</a></div>
     </div>
   </div>
 
@@ -153,7 +158,9 @@
         <li><span class="ico">🤘</span><span><b>검지+새끼 1초 유지</b> — 전체 지우기</span></li>
         <li><span class="ico">🎨</span><span><b>검지·중지 붙이고 흔들기</b> — 색상 창, 붙인 채 좌우로 색 선택</span></li>
         <li><span class="ico">👥</span><span><b>친구 초대</b> — 링크를 보내면 같은 그림판에 함께 그리기</span></li>
+        <li><span class="ico">🖌</span><span><b>펜·붓·수채 버튼</b> — 브러시 바꾸기</span></li>
       </ul>
+      <div class="credit"><a href="https://www.brusheezy.com">Brushes by Brusheezy!</a></div>
     </div>
   </div>
 
@@ -181,6 +188,13 @@
     // MediaPipe 손 랜드마크 연결선 (손목 0 → 각 손가락)
     const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
       [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    // 브러시: 펜은 기본 선, 나머지는 이미지를 선 경로를 따라 도장처럼 찍음 (Brusheezy 이미지, 출처 표시 필수)
+    // scale: 굵기 대비 도장 높이, length: 높이 대비 길이, spacing: 높이 대비 도장 간격, soft: 가장자리 둥글게 흐림
+    const BRUSHES = [
+      { name: "펜" },
+      { name: "붓", src: "brushes/rough.png", scale: 1.5, length: 3, spacing: 0.15, alpha: 1 },
+      { name: "수채", src: "brushes/watercolor.jpg", scale: 3, length: 1, spacing: 0.3, alpha: 0.2, soft: true },
+    ];
 
     const board = document.getElementById("board");
     const paint = document.getElementById("paint");
@@ -209,7 +223,9 @@
       let p = pens.get(id);
       if (!p) {
         p = {
-          colorIdx: 0, width: DEFAULT_WIDTH,
+          colorIdx: 0, width: DEFAULT_WIDTH, brushIdx: 0,
+          dabRest: null,   // 마지막 도장 이후 이동 거리 (null 이면 다음 점에 바로 찍음)
+          dabN: 0,         // 찍은 도장 수 (수채 도장 회전에 사용)
           lastPt: null,    // 직전 그리기 좌표 (null 이면 선 끊김)
           lastMid: null,   // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
           lastErase: null, // 직전 지우개 좌표 (null 이면 끊김)
@@ -222,8 +238,104 @@
     }
     const playerColor = (id) => players.find((q) => q.id === id)?.color ?? "#999";
 
+    // ---- 브러시 ----
+    // 밝은 배경은 투명, 어두울수록 진한 검은 마스크로 바꿔 두고, 색마다 물들인 사본을 캐시
+    for (const b of BRUSHES) {
+      if (!b.src) continue;
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.width; c.height = img.height;
+        const x = c.getContext("2d");
+        x.drawImage(img, 0, 0);
+        const d = x.getImageData(0, 0, c.width, c.height);
+        const px = d.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+          let a = Math.min(1, Math.max(0, (215 - lum) / 175));
+          if (b.soft) {
+            const k = i / 4;
+            const dx = ((k % c.width) / c.width) * 2 - 1, dy = (Math.floor(k / c.width) / c.height) * 2 - 1;
+            a *= Math.min(1, Math.max(0, (1 - Math.hypot(dx, dy)) / 0.4));
+          }
+          px[i] = px[i + 1] = px[i + 2] = 0;
+          px[i + 3] = a * 255;
+        }
+        x.putImageData(d, 0, 0);
+        b.mask = c;
+        b.tints = {};
+      };
+      img.src = b.src;
+    }
+    // 이미지 브러시이고 로드가 끝났으면 그 브러시, 아니면 null (기본 선으로 그림)
+    const stampBrush = (p) => BRUSHES[p.brushIdx]?.mask ? BRUSHES[p.brushIdx] : null;
+    function tinted(b, color) {
+      if (!b.tints[color]) {
+        const c = document.createElement("canvas");
+        c.width = b.mask.width; c.height = b.mask.height;
+        const x = c.getContext("2d");
+        x.drawImage(b.mask, 0, 0);
+        x.globalCompositeOperation = "source-in";
+        x.fillStyle = color;
+        x.fillRect(0, 0, c.width, c.height);
+        b.tints[color] = c;
+      }
+      return b.tints[color];
+    }
+    function dab(p, b, x, y, angle) {
+      const s = Math.max(p.width * b.scale, 6), len = s * b.length;
+      pctx.save();
+      pctx.globalCompositeOperation = "source-over";
+      pctx.globalAlpha = b.alpha;
+      pctx.translate(x, y);
+      pctx.rotate(b.soft ? p.dabN * 2.4 : angle); // 수채는 매번 돌려서 같은 무늬 반복을 숨김
+      pctx.drawImage(tinted(b, COLORS[p.colorIdx]), -len / 2, -s / 2, len, s);
+      pctx.restore();
+      p.dabN++;
+    }
+    // 꺾은선을 따라 일정 간격으로 도장. 간격은 조각 사이에서도 이어짐
+    function stampPath(p, b, pts) {
+      const step = Math.max(Math.max(p.width * b.scale, 6) * b.spacing, 1);
+      if (p.dabRest == null) { dab(p, b, pts[0].x, pts[0].y, 0); p.dabRest = 0; }
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], c = pts[i];
+        const d = Math.hypot(c.x - a.x, c.y - a.y);
+        if (!d) continue;
+        const ang = Math.atan2(c.y - a.y, c.x - a.x);
+        let t = step - p.dabRest;
+        for (; t <= d; t += step) dab(p, b, a.x + ((c.x - a.x) * t) / d, a.y + ((c.y - a.y) * t) / d, ang);
+        p.dabRest = d - (t - step);
+      }
+    }
+    // a → b 를 현재 브러시로 그림. c 가 있으면 제어점으로 한 2차 곡선, 없으면 직선
+    function drawSegment(p, a, c, b) {
+      const br = stampBrush(p);
+      if (br) {
+        const pts = [a];
+        if (c) {
+          const n = Math.max(2, Math.ceil((Math.hypot(c.x - a.x, c.y - a.y) + Math.hypot(b.x - c.x, b.y - c.y)) / 3));
+          for (let i = 1; i <= n; i++) {
+            const t = i / n, u = 1 - t;
+            pts.push({ x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y });
+          }
+        } else pts.push(b);
+        return stampPath(p, br, pts);
+      }
+      pctx.globalCompositeOperation = "source-over";
+      pctx.strokeStyle = COLORS[p.colorIdx];
+      pctx.lineWidth = p.width;
+      pctx.lineCap = pctx.lineJoin = "round";
+      pctx.beginPath();
+      pctx.moveTo(a.x, a.y);
+      if (c) pctx.quadraticCurveTo(c.x, c.y, b.x, b.y);
+      else pctx.lineTo(b.x, b.y);
+      pctx.stroke();
+    }
+
     // 곡선은 중점까지만 그리므로, 선이 끝날 때 마지막 점까지 마저 잇는다
     function endStroke(p) {
+      if (p.lastPt && p.lastMid) drawSegment(p, p.lastMid, null, p.lastPt);
+      p.lastPt = p.lastMid = p.lastErase = p.dabRest = null;
       if (p.lastPt && p.lastMid) {
         pctx.globalCompositeOperation = "source-over";
         pctx.strokeStyle = COLORS[p.colorIdx];
@@ -253,6 +365,14 @@
       chip.style.background = c;
       $palette.querySelector(".row").appendChild(chip);
     });
+    const $brushes = document.getElementById("brushes");
+    BRUSHES.forEach((b, i) => {
+      const btn = document.createElement("button");
+      btn.textContent = b.name;
+      btn.className = i === 0 ? "on" : "";
+      btn.onclick = () => send({ type: "pen", brush_idx: i });
+      $brushes.appendChild(btn);
+    });
     $width.oninput = () => send({ type: "pen", width: +$width.value });
     // 툴바 색상과 제스처 색상 창이 같은 선택(내 펜)을 공유
     function renderMyPen() {
@@ -261,6 +381,7 @@
       for (const sel of [".swatch", "#palette .chip"]) {
         document.querySelectorAll(sel).forEach((e, k) => e.classList.toggle("on", k === p.colorIdx));
       }
+      $brushes.querySelectorAll("button").forEach((e, k) => e.classList.toggle("on", k === p.brushIdx));
       $width.value = p.width;
     }
     function clearAll() {
@@ -488,24 +609,16 @@
       const pt = { x: ev.x * w, y: ev.y * h };
 
       if (g === "draw") {
-        pctx.globalCompositeOperation = "source-over";
-        pctx.strokeStyle = COLORS[p.colorIdx];
-        pctx.lineWidth = p.width;
-        pctx.lineCap = pctx.lineJoin = "round";
-        pctx.beginPath();
         if (!p.lastPt) {
           // 시작점: 점 하나 찍기
-          pctx.moveTo(pt.x, pt.y);
-          pctx.lineTo(pt.x, pt.y);
+          drawSegment(p, pt, null, pt);
           p.lastMid = pt;
         } else {
           // 직전 점을 제어점으로, 중점 → 중점 2차 곡선 (꺾임 없이 이어짐)
           const mid = { x: (p.lastPt.x + pt.x) / 2, y: (p.lastPt.y + pt.y) / 2 };
-          pctx.moveTo(p.lastMid.x, p.lastMid.y);
-          pctx.quadraticCurveTo(p.lastPt.x, p.lastPt.y, mid.x, mid.y);
+          drawSegment(p, p.lastMid, p.lastPt, mid);
           p.lastMid = mid;
         }
-        pctx.stroke();
         p.lastPt = pt;
         markDirty();
       } else if (g === "erase") {
@@ -534,6 +647,10 @@
       const p = pen(ev.player);
       if (ev.color_idx != null) p.colorIdx = ev.color_idx % COLORS.length;
       if (ev.width != null) p.width = ev.width;
+      if (ev.brush_idx != null && ev.brush_idx % BRUSHES.length !== p.brushIdx) {
+        endStroke(p); // 그리던 선은 이전 브러시로 마무리
+        p.brushIdx = ev.brush_idx % BRUSHES.length;
+      }
       if (ev.player === me) renderMyPen();
     }
 
@@ -565,7 +682,7 @@
     // 늦게 들어온 그림판에 현재 그림과 펜 상태를 보내 줌
     function onSnapshotRequest(ev) {
       const penStates = {};
-      for (const [id, p] of pens) penStates[id] = { color_idx: p.colorIdx, width: p.width };
+      for (const [id, p] of pens) penStates[id] = { color_idx: p.colorIdx, width: p.width, brush_idx: p.brushIdx };
       send({ type: "snapshot", to: ev.to, image: paint.toDataURL("image/png"), pens: penStates });
     }
     function onSnapshot(ev) {

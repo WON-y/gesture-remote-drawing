@@ -6,4 +6,5 @@ scripts
 **/__pycache__
 **/*.pyc
 .venv
+assets
 data
