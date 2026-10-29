@@ -15,7 +15,8 @@ FINGERS = [(8, 6), (12, 10), (16, 14), (20, 18)]  # (tip, pip): 검지, 중지, 
 
 EXTEND_RATIO = float(os.getenv("EXTEND_RATIO", "1.1"))   # tip-손목 거리 / pip-손목 거리
 # 그리는 중(draw)에는 판정을 느슨하게: 검지는 덜 펴져도, 다른 손가락은 더 확실히 펴져야 인정
-DRAW_INDEX_RATIO = float(os.getenv("DRAW_INDEX_RATIO", "1.0"))
+# 검지는 PIP 대신 뿌리(5) 기준(tip-손목 / mcp-손목): PIP 에서 굽어도 1.4 이상, 주먹으로 말면 1.0 미만
+DRAW_INDEX_RATIO = float(os.getenv("DRAW_INDEX_RATIO", "1.2"))
 DRAW_OTHER_RATIO = float(os.getenv("DRAW_OTHER_RATIO", "1.25"))
 STABLE_FRAMES = int(os.getenv("STABLE_FRAMES", "3"))     # 제스처 전환에 필요한 연속 프레임
 DRAW_RELEASE_FRAMES = int(os.getenv("DRAW_RELEASE_FRAMES", "6"))  # draw 에서 빠져나갈 때 필요한 연속 프레임
@@ -96,8 +97,10 @@ def classify(lm, drawing: bool = False, erasing: bool = False) -> Gesture:
     # 핀치는 다른 손가락 모양과 상관없이 먼저 판정 (새끼 등을 신경 쓰지 않아도 되도록)
     if pinch(lm, PINCH_RELEASE_RATIO if erasing else PINCH_RATIO):
         return Gesture.ERASE
-    ratios = (DRAW_INDEX_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
+    ratios = (EXTEND_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
     i, m, r, p = finger_states(lm, ratios)
+    if drawing:  # 그리다 검지가 굽어도(끝이 PIP 와 겹쳐 보여도) 손바닥 안으로 말리지 않았으면 유지
+        i = _dist(lm[INDEX_TIP], lm[WRIST]) > _dist(lm[INDEX_MCP], lm[WRIST]) * DRAW_INDEX_RATIO
     if i and not (m or r or p):
         return Gesture.DRAW
     if i and m and not (r or p):

@@ -67,6 +67,9 @@
         baseOptions: { modelAssetPath: MODEL_URL, delegate },
         runningMode: "VIDEO",
         numHands: 1,
+        // 손바닥이 화면 아래로 일부 나가도 추적을 놓치지 않도록 기본값(0.5)보다 낮춤
+        minHandPresenceConfidence: 0.3,
+        minTrackingConfidence: 0.3,
       });
       try {
         return await HandLandmarker.createFromOptions(vision, opts("GPU"));

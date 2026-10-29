@@ -66,7 +66,7 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
 
 - 손가락 펴짐: `|tip−wrist| > |pip−wrist| × EXTEND_RATIO` (손 회전에 강함)
 - 디바운스: 같은 제스처가 `STABLE_FRAMES` 연속일 때만 전환 (`save` 는 오작동 방지로 `SAVE_FRAMES`)
-- 선 끊김 방지: `draw` 중에는 검지 기준을 낮추고(`DRAW_INDEX_RATIO`) 다른 손가락 기준을 높이며(`DRAW_OTHER_RATIO`),
+- 선 끊김 방지: `draw` 중에는 검지를 PIP 대신 뿌리(5) 기준으로 판정해 굽어도 유지하고(`DRAW_INDEX_RATIO`) 다른 손가락 기준을 높이며(`DRAW_OTHER_RATIO`),
   `draw` 에서 벗어나려면 `DRAW_RELEASE_FRAMES` 연속 필요. 손을 놓쳤다가 `LOST_GRACE_MS` 안에 다시 찾으면 이전 제스처 유지
 - 핀치: 다른 손가락보다 먼저 판정. `|엄지끝(4)−검지끝(8)| < PINCH_RATIO × 손크기(손목−9)` 이고,
   주먹과 구분하려고 검지 끝이 검지 뿌리(5)보다 손목에서 멀어야 함. 지우는 중에는 `PINCH_RELEASE_RATIO` 로 느슨하게(깜빡임 방지)
