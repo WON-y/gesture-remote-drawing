@@ -57,7 +57,7 @@
     <div id="toast"></div>
     <div id="palette" hidden>
       <div class="row"></div>
-      <small>← 손을 좌우로 움직여 색 선택 · 손 모양을 바꾸면 확정 →</small>
+      <small>← 손가락을 붙인 채 좌우로 움직여 색 선택 · 손가락을 떼면 확정 →</small>
     </div>
     <div id="qr">
       <h3>폰 카메라로 QR을 스캔하세요</h3>
@@ -70,7 +70,7 @@
         ✊ 주먹: 대기<br />
         👍 엄지 척: 그림 저장<br />
         🤘 검지+새끼 1초: 전체 지우기<br />
-        🖖 검지+중지+약지: 색상 창 → 좌우로 움직여 선택
+        ✌ 검지·중지 붙이고 흔들기: 색상 창 → 붙인 채 좌우로 움직여 선택
       </div>
     </div>
   </div>
@@ -183,7 +183,7 @@
 
     // ---- 제스처 처리 ----
     const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개", save: "👍 저장",
-      clear: "🤘 전체 지우기", palette: "🖖 색상 선택" };
+      clear: "🤘 전체 지우기", palette: "🎨 색상 선택" };
     // 해당 제스처로 바뀌는 순간 1회 실행
     const ACTIONS = {
       save: saveDrawing,

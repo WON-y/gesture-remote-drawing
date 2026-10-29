@@ -10,7 +10,7 @@ from common.schema import Gesture, GestureEvent, LandmarkFrame
 
 WRIST = 0
 THUMB_MCP, THUMB_TIP = 2, 4
-INDEX_TIP, MIDDLE_MCP = 8, 9
+INDEX_MCP, INDEX_TIP, MIDDLE_MCP, MIDDLE_TIP = 5, 8, 9, 12
 FINGERS = [(8, 6), (12, 10), (16, 14), (20, 18)]  # (tip, pip): 검지, 중지, 약지, 새끼
 
 EXTEND_RATIO = float(os.getenv("EXTEND_RATIO", "1.1"))   # tip-손목 거리 / pip-손목 거리
@@ -22,7 +22,11 @@ DRAW_RELEASE_FRAMES = int(os.getenv("DRAW_RELEASE_FRAMES", "6"))  # draw 에서 
 LOST_GRACE_MS = float(os.getenv("LOST_GRACE_MS", "300"))  # 손을 잠깐 놓쳤다 찾으면 이전 제스처 이어가기
 SAVE_FRAMES = int(os.getenv("SAVE_FRAMES", "15"))       # 엄지 척 유지 프레임(오작동 방지로 더 길게)
 CLEAR_FRAMES = int(os.getenv("CLEAR_FRAMES", "30"))     # 🤘 유지 프레임(약 1초, 전체 지우기라 가장 길게)
-PALETTE_FRAMES = int(os.getenv("PALETTE_FRAMES", "8"))  # 3손가락 유지 프레임(색상 창 열기)
+# 검지·중지를 붙이고 흔들면 색상 창. 붙임 = 두 손가락 끝 거리 < 두 손가락 MCP 거리 × TOGETHER_RATIO
+TOGETHER_RATIO = float(os.getenv("TOGETHER_RATIO", "1.2"))
+SHAKE_AMP = float(os.getenv("SHAKE_AMP", "0.02"))           # 흔들기로 인정할 최소 왕복 폭(그림판 폭 비율)
+SHAKE_TURNS = int(os.getenv("SHAKE_TURNS", "3"))            # 필요한 좌우 방향 전환 횟수
+SHAKE_WINDOW_MS = float(os.getenv("SHAKE_WINDOW_MS", "1000"))  # 방향 전환을 세는 시간 창
 SWIPE_DIST = float(os.getenv("SWIPE_DIST", "0.12"))     # 색상 한 칸 넘기는 데 필요한 좌우 이동(그림판 폭 비율)
 THUMB_MARGIN = float(os.getenv("THUMB_MARGIN", "0.2"))  # 엄지 끝이 나머지보다 높아야 하는 정도(손 크기 비율)
 ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 좌우 여백(0~0.5)
@@ -33,7 +37,7 @@ MIN_CUTOFF = float(os.getenv("FILTER_MIN_CUTOFF", "1.5"))
 BETA = float(os.getenv("FILTER_BETA", "5.0"))
 
 # 오작동 방지로 STABLE_FRAMES 보다 오래 유지해야 전환되는 제스처
-HOLD_FRAMES = {Gesture.SAVE: SAVE_FRAMES, Gesture.CLEAR: CLEAR_FRAMES, Gesture.PALETTE: PALETTE_FRAMES}
+HOLD_FRAMES = {Gesture.SAVE: SAVE_FRAMES, Gesture.CLEAR: CLEAR_FRAMES}
 
 
 class OneEuroFilter:
@@ -86,6 +90,11 @@ def thumb_up(lm) -> bool:
     return tip[1] < top - THUMB_MARGIN * size and -dy > abs(dx)
 
 
+def fingers_together(lm) -> bool:
+    """검지·중지 끝이 붙어 있음 (✌ 처럼 벌리면 False)."""
+    return _dist(lm[INDEX_TIP], lm[MIDDLE_TIP]) < _dist(lm[INDEX_MCP], lm[MIDDLE_MCP]) * TOGETHER_RATIO
+
+
 def classify(lm, drawing: bool = False) -> Gesture:
     ratios = (DRAW_INDEX_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
     i, m, r, p = finger_states(lm, ratios)
@@ -97,8 +106,6 @@ def classify(lm, drawing: bool = False) -> Gesture:
         return Gesture.ERASE
     if i and p and not (m or r):
         return Gesture.CLEAR
-    if i and m and r and not p:
-        return Gesture.PALETTE
     if not (i or m or r or p):
         return Gesture.SAVE if thumb_up(lm) else Gesture.IDLE
     return Gesture.HOVER  # 애매한 손 모양은 그리지 않고 커서만 이동
@@ -126,7 +133,29 @@ class GestureEngine:
         self.count = 0
         self.lost: tuple[Gesture, float] | None = None  # (놓치기 직전 제스처, 놓친 시각 ms)
         self.swipe_x: float | None = None  # palette 중 스와이프 기준 x (한 칸 넘길 때마다 갱신)
+        self.palette = False  # 색상 창 열림 (검지·중지를 붙인 동안 유지)
+        self._reset_shake()
         self.fx, self.fy = OneEuroFilter(), OneEuroFilter()
+
+    def _reset_shake(self):
+        self.shake_dir = 0                      # 현재 이동 방향 (-1/0/1)
+        self.shake_ext: float | None = None     # 현재 방향의 끝점 x
+        self.turns: list[float] = []            # 방향 전환 시각(ms)
+
+    def _shake(self, x: float, ts: float) -> bool:
+        """좌우로 SHAKE_AMP 이상씩 SHAKE_WINDOW_MS 안에 SHAKE_TURNS 번 방향을 바꾸면 True."""
+        self.turns = [t for t in self.turns if ts - t <= SHAKE_WINDOW_MS]
+        if self.shake_ext is None:
+            self.shake_ext = x
+        elif self.shake_dir == 0:
+            if abs(x - self.shake_ext) >= SHAKE_AMP:
+                self.shake_dir, self.shake_ext = (1 if x > self.shake_ext else -1), x
+        elif (x - self.shake_ext) * self.shake_dir > 0:
+            self.shake_ext = x  # 같은 방향으로 계속 이동: 끝점 갱신
+        elif abs(x - self.shake_ext) >= SHAKE_AMP:
+            self.shake_dir, self.shake_ext = -self.shake_dir, x
+            self.turns.append(ts)
+        return len(self.turns) >= SHAKE_TURNS
 
     def _need(self, g: Gesture) -> int:
         if g in HOLD_FRAMES:
@@ -185,6 +214,8 @@ class GestureEngine:
             else:
                 self.fx.reset()
                 self.fy.reset()
+                self.palette = False
+                self._reset_shake()
 
         lm = frame.landmarks
         g = self._debounce(classify(lm, drawing=self.gesture == Gesture.DRAW))
@@ -196,6 +227,20 @@ class GestureEngine:
             px = 1 - p[0] if frame.mirrored else p[0]
             return (round(_to_canvas_x(px), 4), round(_to_canvas_y(p[1]), 4))
 
+        hold = self._hold()
+        # 검지·중지를 붙인 채 흔들면 색상 창. 흔들기는 스무딩 전 좌표로 판정(필터가 흔들림을 깎아냄)
+        if g == Gesture.HOVER and fingers_together(lm):
+            if not self.palette and self._shake(_to_canvas_x(x), frame.ts):
+                self.palette = True
+                self._reset_shake()
+            if self.palette:
+                g = Gesture.PALETTE
+            elif self.turns:
+                hold = round(len(self.turns) / SHAKE_TURNS, 2)
+        else:
+            self.palette = False
+            self._reset_shake()
+
         cx = self.fx(_to_canvas_x(x), t)
         return GestureEvent(
             gesture=g,
@@ -203,6 +248,6 @@ class GestureEngine:
             y=round(self.fy(_to_canvas_y(pt[1]), t), 4),
             ts=frame.ts,
             landmarks=[to_canvas_pt(p) for p in lm],
-            hold=self._hold(),
+            hold=hold,
             swipe=self._swipe(g, cx),
         )
