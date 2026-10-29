@@ -5,6 +5,7 @@
   canvas  --WS /ws/canvas/{sid}-->  제스처 이벤트 수신
   cam     --WS /ws/cam/{sid}----->  랜드마크 송신 → c2_gesture 로 전달
   c2_gesture 가 돌려준 GestureEvent → canvas 로 전달
+  canvas  --POST /api/gallery-->  그림 공유 (gallery.py)
 """
 import asyncio
 import contextlib
@@ -19,6 +20,7 @@ import qrcode.image.svg
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect as ws_connect
 
+from c1_gateway import gallery
 from common.schema import PeerEvent, SessionInfo
 
 C2_URL = os.getenv("C2_URL", "ws://c2_gesture:8001")
@@ -52,12 +54,14 @@ async def _cleanup_loop():
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    gallery.init()
     task = asyncio.create_task(_cleanup_loop())
     yield
     task.cancel()
 
 
 app = FastAPI(title="airsketch c1_gateway", lifespan=lifespan)
+app.include_router(gallery.router)
 
 
 def _qr_svg(data: str) -> str:

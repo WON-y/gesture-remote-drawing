@@ -34,10 +34,12 @@
     #toolbar .sp { flex: 1 1 0; }
     .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #bbb; cursor: pointer; }
     .swatch.on { box-shadow: 0 0 0 3px var(--accent); }
-    button { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
+    button, a.btn { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
       color: var(--mint-dark); font-weight: 700; cursor: pointer; transition: background .15s, color .15s; }
-    button:hover { background: var(--mint); color: #fff; }
+    a.btn { display: inline-block; text-decoration: none; }
+    button:hover, a.btn:hover { background: var(--mint); color: #fff; }
     button[aria-pressed="true"] { background: var(--mint); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; background: #fff; color: var(--mint-dark); }
     #peer { font-size: 14px; color: #7a8f8a; }
     #peer.on { color: var(--mint-dark); font-weight: 700; }
     #gesture { font-size: 14px; min-width: 70px; font-weight: 700; color: var(--mint-dark); }
@@ -50,10 +52,10 @@
     #qr h3 { font-weight: 700; color: var(--mint-dark); }
     #qr svg { width: 260px; height: 260px; }
     #qr a { font-size: 12px; word-break: break-all; color: var(--mint-dark); }
-    #guide { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    #guide, #share { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       background: rgba(19,58,53,.35); z-index: 30; }
-    #guide[hidden] { display: none; }
-    #guide .card { position: relative; width: min(380px, calc(100% - 32px)); padding: 24px; box-sizing: border-box;
+    #guide[hidden], #share[hidden] { display: none; }
+    #guide .card, #share .card { position: relative; width: min(380px, calc(100% - 32px)); padding: 24px; box-sizing: border-box;
       background: #fff; border-radius: 16px; border-top: 6px solid var(--mint);
       box-shadow: 0 10px 40px rgba(19,134,111,.18); }
     #guide h3 { margin: 0 0 14px; font-weight: 700; color: var(--mint-dark); }
@@ -62,7 +64,16 @@
       background: var(--mint-soft); font-size: 15px; }
     #guide li .ico { font-size: 22px; width: 28px; text-align: center; }
     #guide li b { font-weight: 700; color: var(--mint-dark); }
-    #guide .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
+    #share h3 { margin: 0 0 14px; font-weight: 700; color: var(--mint-dark); }
+    #share img { display: block; width: 100%; max-height: 200px; object-fit: contain; margin-bottom: 14px;
+      border: 2px solid var(--mint-line); border-radius: 10px; background: #fff; }
+    #share label { display: block; margin-bottom: 10px; font-size: 14px; font-weight: 700; color: var(--mint-dark); }
+    #share input { display: block; width: 100%; margin-top: 4px; padding: 8px 12px; box-sizing: border-box;
+      border: 2px solid var(--mint-line); border-radius: 10px; outline: none; }
+    #share input:focus { border-color: var(--mint); }
+    #shareError { margin: 0; min-height: 1.2em; font-size: 13px; color: #e5484d; }
+    #share .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    #guide .close, #share .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
     #credit { margin-top: 10px; font-size: 10px; color: #8aa39d; }
     #toast { position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px;
       background: var(--mint-dark); color: #fff; border-radius: 999px; font-size: 15px; font-weight: 700; z-index: 20;
@@ -85,6 +96,8 @@
     <label>굵기 <input id="width" type="range" min="2" max="30" value="6" /></label>
     <button id="clear">전체 지우기</button>
     <button id="save">PNG 저장</button>
+    <button id="openShare">공유하기</button>
+    <a class="btn" href="gallery.html?from=canvas">갤러리</a>
     <button id="showQr">QR</button>
     <button id="showGuide">사용방법</button>
     <button id="toggleHand" aria-pressed="true">손 표시</button>
@@ -125,6 +138,21 @@
     </div>
   </div>
 
+  <div id="share" hidden>
+    <form class="card" role="dialog" aria-labelledby="shareTitle">
+      <button type="button" class="close" id="closeShare" aria-label="닫기">✕</button>
+      <h3 id="shareTitle">갤러리에 공유하기</h3>
+      <img id="sharePreview" alt="공유할 그림 미리보기" />
+      <label>닉네임 <input id="shareAuthor" maxlength="20" placeholder="익명" autocomplete="nickname" /></label>
+      <label>제목 <input id="shareName" maxlength="40" placeholder="무제" /></label>
+      <p id="shareError"></p>
+      <div class="actions">
+        <button type="button" id="cancelShare">취소</button>
+        <button type="submit" id="submitShare">공유</button>
+      </div>
+    </form>
+  </div>
+
   <script>
     const COLORS = ["#222222", "#e5484d", "#f5a623", "#30a46c", "#4f8cff", "#8e4ec6"];
     const ERASER_SIZE = 40;
@@ -156,6 +184,7 @@
         pctx.moveTo(lastMid.x, lastMid.y);
         pctx.lineTo(lastPt.x, lastPt.y);
         pctx.stroke();
+        markDirty();
       }
       lastPt = lastMid = lastErase = null;
     }
@@ -186,16 +215,21 @@
     function clearAll() {
       endStroke();
       pctx.clearRect(0, 0, paint.width, paint.height);
+      markDirty();
     }
     document.getElementById("clear").onclick = clearAll;
-    function saveDrawing() {
-      // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
+    // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
+    function renderOut() {
       const out = document.createElement("canvas");
       out.width = paint.width; out.height = paint.height;
       const octx = out.getContext("2d");
       octx.fillStyle = "#fff";
       octx.fillRect(0, 0, out.width, out.height);
       octx.drawImage(paint, 0, 0);
+      return out;
+    }
+    function saveDrawing() {
+      const out = renderOut();
       const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
       const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       const a = document.createElement("a");
@@ -219,7 +253,58 @@
     document.getElementById("showGuide").onclick = () => ($guide.hidden = false);
     document.getElementById("closeGuide").onclick = () => ($guide.hidden = true);
     $guide.onclick = (e) => { if (e.target === $guide) $guide.hidden = true; };
-    window.addEventListener("keydown", (e) => { if (e.key === "Escape") $guide.hidden = true; });
+    window.addEventListener("keydown", (e) => { if (e.key === "Escape") $guide.hidden = $share.hidden = true; });
+
+    // ---- 갤러리 공유 ----
+    // 로그인 대신 브라우저별 비밀 ID 로 "내 그림"(삭제 권한)을 구분. gallery.html 과 같은 키 사용
+    function ownerId() {
+      let id = localStorage.getItem("gallery.owner");
+      if (!id) localStorage.setItem("gallery.owner", (id = crypto.randomUUID()));
+      return id;
+    }
+    const $share = document.getElementById("share");
+    const $shareAuthor = document.getElementById("shareAuthor");
+    const $shareName = document.getElementById("shareName");
+    const $submitShare = document.getElementById("submitShare");
+    const $shareError = document.getElementById("shareError");
+    let shareBlob = null; // 창을 연 순간의 그림 (입력하는 동안 그려진 획은 제외)
+    document.getElementById("openShare").onclick = () => {
+      const out = renderOut();
+      document.getElementById("sharePreview").src = out.toDataURL("image/png");
+      shareBlob = null;
+      $submitShare.disabled = true; // toBlob 은 비동기 → 준비되면 활성화
+      out.toBlob((b) => { shareBlob = b; $submitShare.disabled = false; }, "image/png");
+      $shareError.textContent = "";
+      $shareAuthor.value = localStorage.getItem("gallery.author") ?? "";
+      $shareName.value = "";
+      $share.hidden = false;
+      ($shareAuthor.value ? $shareName : $shareAuthor).focus();
+    };
+    document.getElementById("closeShare").onclick = document.getElementById("cancelShare").onclick =
+      () => ($share.hidden = true);
+    $share.onclick = (e) => { if (e.target === $share) $share.hidden = true; };
+    $share.querySelector("form").onsubmit = async (e) => {
+      e.preventDefault();
+      if (!shareBlob) return;
+      localStorage.setItem("gallery.author", $shareAuthor.value.trim());
+      const fd = new FormData();
+      fd.append("image", shareBlob, "drawing.png");
+      fd.append("author", $shareAuthor.value);
+      fd.append("title", $shareName.value);
+      fd.append("owner_id", ownerId());
+      $submitShare.disabled = true;
+      $shareError.textContent = "";
+      try {
+        const res = await fetch("/api/gallery", { method: "POST", body: fd });
+        if (!res.ok) throw new Error(res.status === 413 ? "그림 용량이 너무 큼" : `HTTP ${res.status}`);
+        $share.hidden = true;
+        showToast("🖼 갤러리에 공유됨");
+      } catch (err) {
+        $shareError.textContent = `공유 실패: ${err.message}`;
+      } finally {
+        $submitShare.disabled = false;
+      }
+    };
 
     // ---- 캔버스 크기 (DPR 대응, 리사이즈 시 내용 유지) ----
     function resize() {
@@ -237,6 +322,43 @@
     }
     window.addEventListener("resize", resize);
     resize();
+
+    // ---- 탭 상태 유지 (새로고침·갤러리 갔다 오기) ----
+    // sessionStorage 는 탭마다 따로라 그림판 탭을 여러 개 열어도 세션이 섞이지 않음.
+    // 동기 API 라 pagehide 에서 저장해도 페이지가 정리되기 전에 끝남
+    const SESSION_KEY = "canvas.session";
+    const DRAWING_KEY = "canvas.drawing";
+    const SAVE_DELAY = 500; // ms, 그리는 동안 매 프레임 PNG 인코딩하지 않도록 멈춘 뒤 저장
+    let dirty = false;
+    let restored = false; // 복원 전에 저장하면 빈 그림으로 덮어쓰므로 막음
+    let saveTimer;
+    function ssGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+    function ssSet(k, v) { try { sessionStorage.setItem(k, v); return true; } catch { return false; } }
+    function ssDel(k) { try { sessionStorage.removeItem(k); } catch {} }
+
+    function markDirty() {
+      dirty = true;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveState, SAVE_DELAY);
+    }
+    function saveState() {
+      clearTimeout(saveTimer);
+      if (!dirty || !restored) return;
+      dirty = false;
+      // 용량 초과(약 5MB) 시 예전 그림이 복원되지 않도록 지움 → 그리기는 그대로 동작
+      if (!ssSet(DRAWING_KEY, paint.toDataURL("image/png"))) ssDel(DRAWING_KEY);
+    }
+    window.addEventListener("pagehide", saveState);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) saveState(); });
+
+    async function restoreDrawing() {
+      const url = ssGet(DRAWING_KEY);
+      if (!url) return;
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      pctx.drawImage(img, 0, 0, board.clientWidth, board.clientHeight); // 창 크기가 바뀌었으면 resize() 처럼 맞춤
+    }
 
     // ---- 제스처 처리 ----
     const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🤏 지우개", save: "👍 저장",
@@ -327,6 +449,7 @@
         }
         pctx.stroke();
         lastPt = pt;
+        markDirty();
       } else if (ev.gesture === "erase") {
         if (lastPt) endStroke(); // 그리던 선만 마무리 (지우개 연결점은 유지)
         // 프레임마다 원만 찍으면 빠르게 움직일 때 원 사이가 비므로, 직전 점과 굵은 선으로 잇는다
@@ -340,6 +463,7 @@
         pctx.stroke();
         pctx.globalCompositeOperation = "source-over";
         lastErase = pt;
+        markDirty();
       } else {
         endStroke();
       }
@@ -372,9 +496,22 @@
     }
 
     // ---- 세션 + WebSocket ----
-    async function start() {
+    // 이 탭에서 쓰던 세션이 서버에 남아 있으면 그대로 사용 → 폰은 연결이 끊긴 적이 없으므로 다시 스캔할 필요 없음
+    async function getSession() {
+      const saved = JSON.parse(ssGet(SESSION_KEY) ?? "null");
+      if (saved) {
+        const r = await fetch(`/api/session/${encodeURIComponent(saved.session_id)}`);
+        if (r.ok) return saved;
+      }
       const res = await fetch("/api/session", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const info = await res.json();
+      ssSet(SESSION_KEY, JSON.stringify(info));
+      return info;
+    }
+
+    async function start() {
+      const info = await getSession();
       document.getElementById("qrImg").innerHTML = info.qr_svg;
       const $a = document.getElementById("camUrl");
       $a.href = $a.textContent = info.cam_url;
@@ -388,12 +525,24 @@
         };
         ws.onclose = (e) => {
           if (e.code === 4409) return; // 다른 탭이 이 세션을 가져감
+          if (e.code === 4404) { // 서버 재시작 등으로 세션이 사라짐 → 새 세션(새 QR)
+            ssDel(SESSION_KEY);
+            start().catch(showStartError);
+            return;
+          }
           setTimeout(connect, 1000);
         };
       };
       connect();
     }
-    start().catch((e) => (document.getElementById("qrImg").textContent = "세션 생성 실패: " + e.message));
+    const showStartError = (e) => (document.getElementById("qrImg").textContent = "세션 생성 실패: " + e.message);
+    // 그림을 먼저 복원한 뒤 연결 → 복원 전에 제스처가 그려지지 않음
+    restoreDrawing()
+      .catch(() => ssDel(DRAWING_KEY)) // 손상된 데이터는 버림
+      .finally(() => {
+        restored = true;
+        start().catch(showStartError);
+      });
   </script>
 </body>
 </html>

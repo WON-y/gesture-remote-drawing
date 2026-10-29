@@ -20,9 +20,9 @@
 
 | 폴더 | 역할 |
 |---|---|
-| `c1_gateway/` | `POST /api/session` 으로 세션 ID + QR(SVG) 발급, cam ↔ c2 ↔ canvas WebSocket 중계 |
+| `c1_gateway/` | `POST /api/session` 으로 세션 ID + QR(SVG) 발급, cam ↔ c2 ↔ canvas WebSocket 중계, `gallery.py` 갤러리 API |
 | `c2_gesture/` | 21개 랜드마크 → 제스처 판정, One Euro Filter 로 좌표 스무딩, 디바운스 |
-| `web/` | `cam.html`(폰, MediaPipe JS), `canvas.html`(PC, 그림판) |
+| `web/` | `cam.html`(폰, MediaPipe JS), `canvas.html`(PC, 그림판), `gallery.html`(공유된 그림 모음) |
 | `edge/` | Nginx. TLS 종료 (폰은 HTTPS 에서만 카메라 허용), 정적 파일 + 프록시 |
 | `common/schema.py` | 메시지 규격 (pydantic). 두 서비스 이미지에 함께 복사됨 |
 | `scripts/make-cert.sh` | 자체 서명 인증서 생성 (LAN IP 를 SAN 에 포함) |
@@ -82,6 +82,24 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
   `GestureEvent.swipe`(±1)를 보내고 기준점을 옮김. 그림판은 한 칸씩 색을 넘기고(양 끝은 순환) `palette` 가 끝나면 창을 닫음
 - 좌표: 전면 카메라 좌우 반전 → 가장자리 여백(좌우 `ACTIVE_MARGIN`, 위 `ACTIVE_TOP`, 아래 `ACTIVE_BOTTOM`) 잘라 0~1 로 확장 → One Euro Filter
   - 아래 여백을 크게 두는 이유: 검지 끝은 손 맨 위라, 카메라 맨 아래까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊김
+
+## 갤러리
+
+그림판의 **[공유하기]** → 닉네임·제목 입력 → 서버에 저장 → `gallery.html` 에서 전체 / 내 그림 보기, 원본 보기·다운로드, 내 그림 삭제.
+
+| API | 설명 |
+|---|---|
+| `POST /api/gallery` | multipart: `image`(PNG), `title`(≤40), `author`(≤20), `owner_id` → `GalleryItem` |
+| `GET /api/gallery?mine=&offset=&limit=` | 최신순 목록 `{items, total}`. `X-Owner-Id` 헤더로 `mine` 판정 |
+| `DELETE /api/gallery/{id}` | `X-Owner-Id` 가 올린 사람과 같을 때만 (아니면 403) |
+
+- 저장: 호스트 `./data/gallery/` (c1 에 `/data/gallery` 로 마운트, 재빌드해도 유지)
+  - `images/<uuid>.png` 원본, `images/<uuid>.thumb.webp` 480px 썸네일 → edge 가 `/gallery-files/` 로 직접 서빙
+  - `gallery.db` SQLite 메타데이터 — edge 에는 `images/` 만 마운트하므로 외부에 노출되지 않음
+- 소유자: 로그인 대신 브라우저가 만든 `owner_id`(`localStorage` 의 `gallery.owner`). 서버에는 sha256 해시만 저장하고 응답에 내보내지 않음.
+  브라우저 데이터를 지우면 그 브라우저에서 올린 그림은 더 이상 삭제할 수 없다.
+- 업로드 한도: c1 `GALLERY_MAX_MB`(10) / edge `client_max_body_size`(11m). Nginx 기본값 1m 이면 고해상도 캔버스가 413 으로 실패한다.
+- 서버는 Pillow 로 끝까지 디코딩해 PNG 인지 확인하고, 파일명은 uuid 로 새로 만든다. 제목·닉네임은 화면에 `textContent` 로만 넣는다.
 
 ## 실행
 
