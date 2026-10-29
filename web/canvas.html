@@ -23,17 +23,32 @@
     html, body { margin: 0; height: 100%; font-family: "ArittaDodum", system-ui, sans-serif; font-weight: 500;
       color: #1f3a35; background: var(--mint-soft); overflow: hidden; }
     button, input { font: inherit; }
-    #toolbar { height: var(--bar); display: flex; align-items: center; gap: 12px; padding: 0 16px;
+    /* 버튼이 많아 좁은 화면에서는 줄바꿈 대신 가로 스크롤 */
+    #toolbar { height: var(--bar); display: flex; align-items: center; gap: 8px; padding: 0 16px;
+      overflow-x: auto; scrollbar-width: thin; white-space: nowrap;
       background: var(--mint-soft); border-bottom: 2px solid var(--mint-line); box-sizing: border-box; }
     #toolbar strong { font-size: 20px; font-weight: 700; color: var(--mint-dark); letter-spacing: -.3px; }
     #toolbar label { display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--mint-dark); }
-    #toolbar input[type=range] { accent-color: var(--mint); }
-    #toolbar .sp { flex: 1; }
+    #toolbar input[type=range] { width: 96px; accent-color: var(--mint); }
+    #toolbar > * { flex-shrink: 0; }
+    #toolbar .sp { flex: 1 1 0; }
     .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #bbb; cursor: pointer; }
     .swatch.on { box-shadow: 0 0 0 3px var(--accent); }
-    button { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
+    button, a.btn { padding: 6px 14px; border: 2.5px solid var(--mint); border-radius: 999px; background: #fff;
       color: var(--mint-dark); font-weight: 700; cursor: pointer; transition: background .15s, color .15s; }
-    button:hover { background: var(--mint); color: #fff; }
+    a.btn { display: inline-block; text-decoration: none; }
+    button:hover, a.btn:hover { background: var(--mint); color: #fff; }
+    /* on/off 스위치: 체크박스는 숨기되 키보드 포커스는 유지 */
+    .switch { position: relative; cursor: pointer; }
+    .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+    .switch .track { position: relative; width: 40px; height: 22px; border-radius: 999px; background: #c9d6d3;
+      transition: background .2s; }
+    .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .2s; }
+    .switch input:checked + .track { background: var(--mint); }
+    .switch input:checked + .track::after { transform: translateX(18px); }
+    .switch input:focus-visible + .track { outline: 2px solid var(--mint-dark); outline-offset: 2px; }
+    button:disabled { opacity: .5; cursor: default; background: #fff; color: var(--mint-dark); }
     #peer { font-size: 14px; color: #7a8f8a; }
     #peer.on { color: var(--mint-dark); font-weight: 700; }
     #gesture { font-size: 14px; min-width: 70px; font-weight: 700; color: var(--mint-dark); }
@@ -51,10 +66,10 @@
     #qr h3 { font-weight: 700; color: var(--mint-dark); }
     #qr svg { width: 260px; height: 260px; }
     #qr a { font-size: 12px; word-break: break-all; color: var(--mint-dark); }
-    #guide { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    #guide, #share { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       background: rgba(19,58,53,.35); z-index: 30; }
-    #guide[hidden] { display: none; }
-    #guide .card { position: relative; width: min(380px, calc(100% - 32px)); padding: 24px; box-sizing: border-box;
+    #guide[hidden], #share[hidden] { display: none; }
+    #guide .card, #share .card { position: relative; width: min(380px, calc(100% - 32px)); padding: 24px; box-sizing: border-box;
       background: #fff; border-radius: 16px; border-top: 6px solid var(--mint);
       box-shadow: 0 10px 40px rgba(19,134,111,.18); }
     #guide h3 { margin: 0 0 14px; font-weight: 700; color: var(--mint-dark); }
@@ -63,7 +78,16 @@
       background: var(--mint-soft); font-size: 15px; }
     #guide li .ico { font-size: 22px; width: 28px; text-align: center; }
     #guide li b { font-weight: 700; color: var(--mint-dark); }
-    #guide .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
+    #share h3 { margin: 0 0 14px; font-weight: 700; color: var(--mint-dark); }
+    #share img { display: block; width: 100%; max-height: 200px; object-fit: contain; margin-bottom: 14px;
+      border: 2px solid var(--mint-line); border-radius: 10px; background: #fff; }
+    #share label { display: block; margin-bottom: 10px; font-size: 14px; font-weight: 700; color: var(--mint-dark); }
+    #share input { display: block; width: 100%; margin-top: 4px; padding: 8px 12px; box-sizing: border-box;
+      border: 2px solid var(--mint-line); border-radius: 10px; outline: none; }
+    #share input:focus { border-color: var(--mint); }
+    #shareError { margin: 0; min-height: 1.2em; font-size: 13px; color: #e5484d; }
+    #share .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    #guide .close, #share .close { position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; padding: 0; line-height: 1; }
     #credit { margin-top: 10px; font-size: 10px; color: #8aa39d; }
     #toast { position: absolute; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 10px 18px;
       background: var(--mint-dark); color: #fff; border-radius: 999px; font-size: 15px; font-weight: 700; z-index: 20;
@@ -89,10 +113,15 @@
     <button id="showQr">QR</button>
     <button id="invite">친구 초대</button>
     <button id="showGuide">사용방법</button>
+    <label class="switch">손 표시
+      <input id="toggleHand" type="checkbox" role="switch" checked /><span class="track" aria-hidden="true"></span>
+    </label>
     <span class="sp"></span>
     <span id="gesture">—</span>
     <span id="players" title="참여자 (흐린 점: 폰 미연결)"></span>
     <span id="peer">● 폰 대기 중</span>
+    <button id="openShare">공유하기</button>
+    <a class="btn" href="gallery.html?from=canvas">갤러리</a>
   </div>
 
   <div id="board">
@@ -126,6 +155,21 @@
         <li><span class="ico">👥</span><span><b>친구 초대</b> — 링크를 보내면 같은 그림판에 함께 그리기</span></li>
       </ul>
     </div>
+  </div>
+
+  <div id="share" hidden>
+    <form class="card" role="dialog" aria-labelledby="shareTitle">
+      <button type="button" class="close" id="closeShare" aria-label="닫기">✕</button>
+      <h3 id="shareTitle">갤러리에 공유하기</h3>
+      <img id="sharePreview" alt="공유할 그림 미리보기" />
+      <label>닉네임 <input id="shareAuthor" maxlength="20" placeholder="익명" autocomplete="nickname" /></label>
+      <label>제목 <input id="shareName" maxlength="40" placeholder="무제" /></label>
+      <p id="shareError"></p>
+      <div class="actions">
+        <button type="button" id="cancelShare">취소</button>
+        <button type="submit" id="submitShare">공유</button>
+      </div>
+    </form>
   </div>
 
   <script>
@@ -189,6 +233,7 @@
         pctx.moveTo(p.lastMid.x, p.lastMid.y);
         pctx.lineTo(p.lastPt.x, p.lastPt.y);
         pctx.stroke();
+        markDirty();
       }
       p.lastPt = p.lastMid = p.lastErase = null;
     }
@@ -221,16 +266,21 @@
     function clearAll() {
       for (const p of pens.values()) endStroke(p);
       pctx.clearRect(0, 0, paint.width, paint.height);
+      markDirty();
     }
     document.getElementById("clear").onclick = () => send({ type: "clear" });
-    function saveDrawing() {
-      // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
+    // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
+    function renderOut() {
       const out = document.createElement("canvas");
       out.width = paint.width; out.height = paint.height;
       const octx = out.getContext("2d");
       octx.fillStyle = "#fff";
       octx.fillRect(0, 0, out.width, out.height);
       octx.drawImage(paint, 0, 0);
+      return out;
+    }
+    function saveDrawing() {
+      const out = renderOut();
       const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
       const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       const a = document.createElement("a");
@@ -263,7 +313,59 @@
     document.getElementById("showGuide").onclick = () => ($guide.hidden = false);
     document.getElementById("closeGuide").onclick = () => ($guide.hidden = true);
     $guide.onclick = (e) => { if (e.target === $guide) $guide.hidden = true; };
-    window.addEventListener("keydown", (e) => { if (e.key === "Escape") $guide.hidden = true; });
+    window.addEventListener("keydown", (e) => { if (e.key === "Escape") $guide.hidden = $share.hidden = true; });
+
+    // ---- 갤러리 공유 ----
+    // 로그인 대신 브라우저별 비밀 ID 로 "내 그림"(삭제 권한)을 구분. gallery.html 과 같은 키 사용
+    function ownerId() {
+      let id = localStorage.getItem("gallery.owner");
+      if (!id) localStorage.setItem("gallery.owner", (id = crypto.randomUUID()));
+      return id;
+    }
+    const $share = document.getElementById("share");
+    const $shareAuthor = document.getElementById("shareAuthor");
+    const $shareName = document.getElementById("shareName");
+    const $submitShare = document.getElementById("submitShare");
+    const $shareError = document.getElementById("shareError");
+    let shareBlob = null; // 창을 연 순간의 그림 (입력하는 동안 그려진 획은 제외)
+    document.getElementById("openShare").onclick = () => {
+      const out = renderOut();
+      document.getElementById("sharePreview").src = out.toDataURL("image/png");
+      shareBlob = null;
+      $submitShare.disabled = true; // toBlob 은 비동기 → 준비되면 활성화
+      out.toBlob((b) => { shareBlob = b; $submitShare.disabled = false; }, "image/png");
+      $shareError.textContent = "";
+      $shareAuthor.value = localStorage.getItem("gallery.author") ?? "";
+      $shareName.value = "";
+      $share.hidden = false;
+      ($shareAuthor.value ? $shareName : $shareAuthor).focus();
+    };
+    document.getElementById("closeShare").onclick = document.getElementById("cancelShare").onclick =
+      () => ($share.hidden = true);
+    $share.onclick = (e) => { if (e.target === $share) $share.hidden = true; };
+    $share.querySelector("form").onsubmit = async (e) => {
+      e.preventDefault();
+      if (!shareBlob) return;
+      localStorage.setItem("gallery.author", $shareAuthor.value.trim());
+      const fd = new FormData();
+      fd.append("image", shareBlob, "drawing.png");
+      fd.append("author", $shareAuthor.value);
+      fd.append("title", $shareName.value);
+      fd.append("owner_id", ownerId());
+      $submitShare.disabled = true;
+      $shareError.textContent = "";
+      try {
+        const res = await fetch("/api/gallery", { method: "POST", body: fd });
+        if (!res.ok) throw new Error(res.status === 413 ? "그림 용량이 너무 큼" : `HTTP ${res.status}`);
+        $share.hidden = true;
+        showToast("🖼 갤러리에 공유됨");
+      } catch (err) {
+        $shareError.textContent = `공유 실패: ${err.message}`;
+      } finally {
+        $submitShare.disabled = false;
+      }
+    };
+
 
     // ---- 캔버스 크기 (DPR 대응, 리사이즈 시 내용 유지) ----
     function resize() {
@@ -290,6 +392,15 @@
       renderPending = true;
       requestAnimationFrame(renderCursors);
     }
+    // 손 골격 표시 토글 (기본 켜짐, 브라우저에 기억). 커서는 항상 표시
+    const $toggleHand = document.getElementById("toggleHand");
+    let showHand = localStorage.getItem("canvas.showHand") !== "0";
+    $toggleHand.checked = showHand;
+    $toggleHand.onchange = () => {
+      showHand = $toggleHand.checked;
+      localStorage.setItem("canvas.showHand", showHand ? "1" : "0");
+      requestRender();
+    };
     function drawHand(lm, w, h, color) {
       if (!lm) return;
       cctx.strokeStyle = color;
@@ -317,7 +428,7 @@
         const hand = p.hand;
         if (!hand) continue;
         const color = playerColor(id);
-        drawHand(hand.landmarks, w, h, color);
+        if (showHand) drawHand(hand.landmarks, w, h, color);
         const { pt } = hand;
         const r = hand.gesture === "erase" ? ERASER_SIZE : Math.max(p.width / 2, 4);
         cctx.beginPath();
@@ -396,6 +507,7 @@
         }
         pctx.stroke();
         p.lastPt = pt;
+        markDirty();
       } else if (g === "erase") {
         if (p.lastPt) endStroke(p); // 그리던 선만 마무리 (지우개 연결점은 유지)
         // 프레임마다 원만 찍으면 빠르게 움직일 때 원 사이가 비므로, 직전 점과 굵은 선으로 잇는다
@@ -409,6 +521,7 @@
         pctx.stroke();
         pctx.globalCompositeOperation = "source-over";
         p.lastErase = pt;
+        markDirty();
       } else {
         endStroke(p);
       }
@@ -464,8 +577,59 @@
         pctx.globalCompositeOperation = "destination-over";
         pctx.drawImage(img, 0, 0, board.clientWidth, board.clientHeight);
         pctx.restore();
+        markDirty();
       };
       img.src = ev.image;
+    }
+
+    // ---- 탭 상태 유지 (새로고침·갤러리 갔다 오기) ----
+    // 방에 다른 그림판이 있으면 그쪽 스냅샷(최신)을 받으므로, 혼자일 때만 이 탭에 저장해 둔 그림을 복원.
+    // sessionStorage 는 탭마다 따로이고 동기 API 라 pagehide 에서 저장해도 페이지가 정리되기 전에 끝남
+    const SAVE_DELAY = 500; // ms, 그리는 동안 매 프레임 PNG 인코딩하지 않도록 멈춘 뒤 저장
+    let dirty = false;
+    let restored = false; // 복원 전에 저장하면 빈 그림으로 덮어쓰므로 막음
+    let saveTimer;
+    const drawingKey = () => `airsketch:${roomId}:drawing`;
+    function markDirty() {
+      dirty = true;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveState, SAVE_DELAY);
+    }
+    function saveState() {
+      clearTimeout(saveTimer);
+      if (!dirty || !restored || !roomId) return;
+      dirty = false;
+      // 용량 초과(약 5MB) 시 예전 그림이 복원되지 않도록 지움 → 그리기는 그대로 동작
+      try { sessionStorage.setItem(drawingKey(), paint.toDataURL("image/png")); }
+      catch { try { sessionStorage.removeItem(drawingKey()); } catch {} }
+    }
+    window.addEventListener("pagehide", saveState);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) saveState(); });
+    // 뒤로가기 캐시(bfcache)로 되살아나면 떠나기 전 그림 그대로라, 그사이 친구가 바꾼 내용이 빠짐 → 새로 로드해 위 규칙으로 복원
+    window.addEventListener("pageshow", (e) => { if (e.persisted) location.reload(); });
+
+    // 입장 직후 첫 참여자 목록을 보고 한 번만 결정
+    async function restoreDrawing() {
+      if (restored) return;
+      const alone = !players.some((q) => q.canvas && q.id !== me);
+      let url = null;
+      try { url = sessionStorage.getItem(drawingKey()); } catch {}
+      if (alone && url) {
+        try {
+          const img = new Image();
+          img.src = url;
+          await img.decode();
+          // 복원 중에 그려진 선이 덮이지 않도록 아래에 깔기 (스냅샷과 같은 방식)
+          pctx.save();
+          pctx.globalCompositeOperation = "destination-over";
+          pctx.drawImage(img, 0, 0, board.clientWidth, board.clientHeight);
+          pctx.restore();
+        } catch {
+          try { sessionStorage.removeItem(drawingKey()); } catch {} // 손상된 데이터는 버림
+        }
+      }
+      restored = true;
+      if (dirty) markDirty();
     }
 
     // ---- 방 입장 + WebSocket ----
@@ -507,7 +671,7 @@
         ws.onmessage = (e) => {
           const msg = JSON.parse(e.data);
           if (msg.type === "gesture") onGesture(msg);
-          else if (msg.type === "players") onPlayers(msg);
+          else if (msg.type === "players") { onPlayers(msg); restoreDrawing(); }
           else if (msg.type === "pen") onPen(msg);
           else if (msg.type === "clear") { clearAll(); showToast("🧹 전체 지움"); }
           else if (msg.type === "snapshot_request") onSnapshotRequest(msg);

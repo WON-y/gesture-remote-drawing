@@ -123,3 +123,21 @@ class PlayerInfo(BaseModel):
     cam_url: str
     qr_svg: str
     invite_url: str
+
+
+# ---- REST: /api/gallery ----
+class GalleryItem(BaseModel):
+    id: str
+    title: str
+    author: str
+    created: float  # unix time (s)
+    width: int
+    height: int
+    url: str        # 원본 PNG
+    thumb_url: str  # 목록용 썸네일
+    mine: bool = False  # 요청한 X-Owner-Id 가 올린 그림인지
+
+
+class GalleryPage(BaseModel):
+    items: list[GalleryItem]
+    total: int
