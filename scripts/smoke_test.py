@@ -1,6 +1,6 @@
 """통합 테스트: docker compose 로 띄운 전체 서비스(edge → c1_gateway → c2_gesture)를 실제로 통과시킨다.
 
-  세션 생성 → 그림판 WS 연결 → 폰 WS 연결 → 랜드마크 전송 → 그림판에 draw 제스처 도착 → 폰 종료 알림
+  방 생성 → 플레이어 입장 → 그림판 WS 연결 → 폰 WS 연결 → 랜드마크 전송 → 그림판에 draw 제스처 도착 → 폰 종료 알림
 
 사용법: python scripts/smoke_test.py [https://localhost]
 자체 서명 인증서를 쓰므로 인증서 검증은 끈다.
@@ -46,21 +46,35 @@ async def recv_until(ws, pred, what):
         raise SystemExit(f"FAIL: {what} 을(를) {TIMEOUT}초 안에 받지 못함")
 
 
-async def main():
-    req = urllib.request.Request(f"{BASE}/api/session", method="POST")
+def post(path):
+    req = urllib.request.Request(f"{BASE}{path}", method="POST")
     with urllib.request.urlopen(req, context=SSL, timeout=TIMEOUT) as r:
-        info = json.load(r)
-    sid = info["session_id"]
-    assert info["cam_url"].endswith(f"/cam.html?s={sid}"), info["cam_url"]
-    assert info["qr_svg"].startswith("<svg"), "QR 이 SVG 가 아님"
-    print(f"ok  세션 생성: {sid}")
+        return json.load(r)
 
-    async with connect(f"{WS_BASE}/ws/canvas/{sid}", ssl=SSL) as canvas:
-        await recv_until(canvas, lambda m: m == {"type": "peer", "role": "cam", "state": "left"}, "초기 peer(left)")
+
+def players_event(pid, cam):
+    """방의 플레이어 목록 중 pid 의 폰 연결 상태가 cam 인 players 이벤트인지."""
+    return lambda m: m.get("type") == "players" and any(p["id"] == pid and p["cam"] is cam for p in m["players"])
+
+
+async def main():
+    room = post("/api/session")
+    sid = room["session_id"]
+    assert room["invite_url"].endswith(f"/canvas.html?room={sid}"), room["invite_url"]
+    print(f"ok  방 생성: {sid}")
+
+    info = post(f"/api/session/{sid}/players")
+    pid = info["player_id"]
+    assert f"/cam.html?s={sid}&p={pid}&c=" in info["cam_url"], info["cam_url"]
+    assert info["qr_svg"].startswith("<svg"), "QR 이 SVG 가 아님"
+    print(f"ok  플레이어 입장: {pid} ({info['color']})")
+
+    async with connect(f"{WS_BASE}/ws/canvas/{sid}/{pid}", ssl=SSL) as canvas:
+        await recv_until(canvas, players_event(pid, False), "초기 players(폰 없음)")
         print("ok  그림판 연결")
 
-        async with connect(f"{WS_BASE}/ws/cam/{sid}", ssl=SSL) as cam:
-            await recv_until(canvas, lambda m: m.get("type") == "peer" and m["state"] == "joined", "peer(joined)")
+        async with connect(f"{WS_BASE}/ws/cam/{sid}/{pid}", ssl=SSL) as cam:
+            await recv_until(canvas, players_event(pid, True), "players(폰 연결)")
             print("ok  폰 연결 알림")
 
             lm = draw_hand()
@@ -69,9 +83,10 @@ async def main():
             ev = await recv_until(canvas, lambda m: m.get("type") == "gesture" and m["gesture"] == "draw",
                                   "draw 제스처")
             assert 0 <= ev["x"] <= 1 and 0 <= ev["y"] <= 1, ev
+            assert ev["player"] == pid, ev
             print(f"ok  랜드마크 → draw 제스처 도착 (x={ev['x']}, y={ev['y']})")
 
-        await recv_until(canvas, lambda m: m.get("type") == "peer" and m["state"] == "left", "peer(left)")
+        await recv_until(canvas, players_event(pid, False), "players(폰 종료)")
         print("ok  폰 종료 알림")
 
     print("PASS")
