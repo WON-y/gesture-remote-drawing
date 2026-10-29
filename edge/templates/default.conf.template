@@ -26,6 +26,10 @@ server {
 
     root /usr/share/nginx/html;
 
+    # 컨테이너 내부 포트(443)로 절대 URL 을 만들지 않도록 상대 Location 사용
+    # (호스트 포트가 8443 등일 때 https://host/... 로 잘못 리다이렉트되는 문제 방지)
+    absolute_redirect off;
+
     location = / {
         return 302 /canvas.html;
     }
