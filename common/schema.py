@@ -18,6 +18,8 @@ class Gesture(str, Enum):
     DRAW = "draw"    # 검지만: 그리기
     ERASE = "erase"  # 손바닥 펴기: 지우개
     SAVE = "save"    # 엄지 척: 그림 저장
+    CLEAR = "clear"  # 검지+새끼(🤘) 길게 유지: 전체 지우기
+    PALETTE = "palette"  # 검지+중지+약지: 색상 창 열기, 좌우 스와이프로 색 선택
 
 
 # ---- cam → gateway → c2 ----
@@ -46,6 +48,10 @@ class GestureEvent(BaseModel):
     ts: float
     # 그림판 좌표(0~1)로 변환한 21개 점 [[x, y], ...]. 표시용이라 스무딩은 적용하지 않음
     landmarks: list[tuple[float, float]] | None = None
+    # 길게 유지해야 하는 제스처(save/clear/palette)로 바뀌는 중일 때 진행률 0~1
+    hold: float | None = None
+    # palette 중 좌우 스와이프 한 칸: -1 왼쪽, 1 오른쪽
+    swipe: int | None = None
 
 
 # ---- gateway → canvas ----

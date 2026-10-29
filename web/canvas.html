@@ -28,6 +28,14 @@
       background: rgba(0,0,0,.75); color: #fff; border-radius: 999px; font-size: 15px; z-index: 20;
       opacity: 0; transition: opacity .3s; pointer-events: none; }
     #toast.on { opacity: 1; }
+    #palette { position: absolute; left: 50%; top: 24px; transform: translateX(-50%); padding: 14px 20px 10px;
+      background: rgba(255,255,255,.95); border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,.2);
+      text-align: center; z-index: 15; pointer-events: none; }
+    #palette .row { display: flex; gap: 14px; align-items: center; }
+    #palette .chip { width: 40px; height: 40px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px #bbb;
+      transition: transform .15s; }
+    #palette .chip.on { transform: scale(1.35); box-shadow: 0 0 0 3px var(--accent); }
+    #palette small { display: block; margin-top: 10px; color: #666; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -47,6 +55,10 @@
     <canvas id="paint"></canvas>
     <canvas id="cursor"></canvas>
     <div id="toast"></div>
+    <div id="palette" hidden>
+      <div class="row"></div>
+      <small>← 손을 좌우로 움직여 색 선택 · 손 모양을 바꾸면 확정 →</small>
+    </div>
     <div id="qr">
       <h3>폰 카메라로 QR을 스캔하세요</h3>
       <div id="qrImg">세션 생성 중…</div>
@@ -56,7 +68,9 @@
         ✌ 검지+중지: 커서 이동<br />
         🖐 손바닥: 지우개<br />
         ✊ 주먹: 대기<br />
-        👍 엄지 척: 그림 저장
+        👍 엄지 척: 그림 저장<br />
+        🤘 검지+새끼 1초: 전체 지우기<br />
+        🖖 검지+중지+약지: 색상 창 → 좌우로 움직여 선택
       </div>
     </div>
   </div>
@@ -64,7 +78,7 @@
   <script>
     const COLORS = ["#222222", "#e5484d", "#f5a623", "#30a46c", "#4f8cff", "#8e4ec6"];
     const ERASER_SIZE = 40;
-    const SAVE_COOLDOWN = 2000; // ms, 엄지 척 연속 저장 방지
+    const ACTION_COOLDOWN = 2000; // ms, 손을 잠깐 놓쳤다 찾을 때 같은 동작이 다시 실행되는 것 방지
     const LOST_GRACE_MS = 300;  // 서버(c2) LOST_GRACE_MS 와 맞출 것
     let lostTimer;
 
@@ -77,6 +91,7 @@
     const $gesture = document.getElementById("gesture");
     const $qr = document.getElementById("qr");
 
+    let colorIdx = 0;
     let color = COLORS[0];
     let lastPt = null; // 직전 그리기 좌표 (null 이면 선 끊김)
     let lastMid = null; // 직전 곡선 조각의 끝점 (lastPt 와 그 이전 점의 중점)
@@ -93,24 +108,35 @@
       }
       lastPt = lastMid = null;
     }
-    let lastSave = 0;
-
     // ---- 툴바 ----
     const $colors = document.getElementById("colors");
     $colors.style.display = "flex";
     $colors.style.gap = "8px";
+    const $palette = document.getElementById("palette");
     COLORS.forEach((c, i) => {
       const s = document.createElement("div");
       s.className = "swatch" + (i === 0 ? " on" : "");
       s.style.background = c;
-      s.onclick = () => {
-        color = c;
-        document.querySelectorAll(".swatch").forEach((e) => e.classList.remove("on"));
-        s.classList.add("on");
-      };
+      s.onclick = () => setColor(i);
       $colors.appendChild(s);
+      const chip = document.createElement("div");
+      chip.className = "chip" + (i === 0 ? " on" : "");
+      chip.style.background = c;
+      $palette.querySelector(".row").appendChild(chip);
     });
-    document.getElementById("clear").onclick = () => pctx.clearRect(0, 0, paint.width, paint.height);
+    // 툴바 색상과 제스처 색상 창이 같은 선택을 공유
+    function setColor(i) {
+      colorIdx = (i + COLORS.length) % COLORS.length;
+      color = COLORS[colorIdx];
+      for (const sel of [".swatch", "#palette .chip"]) {
+        document.querySelectorAll(sel).forEach((e, k) => e.classList.toggle("on", k === colorIdx));
+      }
+    }
+    function clearAll() {
+      endStroke();
+      pctx.clearRect(0, 0, paint.width, paint.height);
+    }
+    document.getElementById("clear").onclick = clearAll;
     function saveDrawing() {
       // 지운 부분이 투명으로 남지 않도록 흰 배경에 합성
       const out = document.createElement("canvas");
@@ -156,7 +182,14 @@
     resize();
 
     // ---- 제스처 처리 ----
-    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개", save: "👍 저장" };
+    const LABEL = { none: "—", idle: "✊ 대기", hover: "✌ 이동", draw: "☝ 그리기", erase: "🖐 지우개", save: "👍 저장",
+      clear: "🤘 전체 지우기", palette: "🖖 색상 선택" };
+    // 해당 제스처로 바뀌는 순간 1회 실행
+    const ACTIONS = {
+      save: saveDrawing,
+      clear: () => { clearAll(); showToast("🧹 전체 지움"); },
+    };
+    const lastAction = {};
     // MediaPipe 손 랜드마크 연결선 (손목 0 → 각 손가락)
     const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
       [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
@@ -182,21 +215,26 @@
 
     function onGesture(ev) {
       $gesture.textContent = LABEL[ev.gesture] ?? ev.gesture;
-      // 엄지 척으로 바뀌는 순간 1회 저장
-      if (ev.gesture === "save" && prevGesture !== "save" && performance.now() - lastSave > SAVE_COOLDOWN) {
-        lastSave = performance.now();
-        saveDrawing();
+      const g = ev.gesture;
+      const now = performance.now();
+      if (ACTIONS[g] && prevGesture !== g && now - (lastAction[g] ?? -Infinity) > ACTION_COOLDOWN) {
+        lastAction[g] = now;
+        ACTIONS[g]();
       }
-      prevGesture = ev.gesture;
+      prevGesture = g;
       const w = board.clientWidth, h = board.clientHeight;
       cctx.clearRect(0, 0, w, h);
       drawHand(ev.landmarks, w, h);
       clearTimeout(lostTimer);
       if (ev.x == null) {
         // 손을 잠깐 놓친 경우: 곧 다시 그리면 같은 선으로 이어지도록 바로 끝내지 않음
-        lostTimer = setTimeout(endStroke, LOST_GRACE_MS);
+        lostTimer = setTimeout(() => { endStroke(); $palette.hidden = true; }, LOST_GRACE_MS);
         return;
       }
+
+      // 색상 창: palette 동안 열어두고 스와이프마다 한 칸, 다른 손 모양이 되면 닫힘(선택 확정)
+      $palette.hidden = g !== "palette";
+      if (ev.swipe) setColor(colorIdx + ev.swipe);
 
       const pt = { x: ev.x * w, y: ev.y * h };
       const width = +document.getElementById("width").value;
@@ -239,6 +277,15 @@
       cctx.strokeStyle = ev.gesture === "draw" ? color : "#999";
       cctx.lineWidth = 2;
       cctx.stroke();
+
+      // 길게 유지해야 하는 제스처 진행률: 커서 둘레 원호
+      if (ev.hold) {
+        cctx.beginPath();
+        cctx.arc(pt.x, pt.y, r + 10, -Math.PI / 2, -Math.PI / 2 + ev.hold * Math.PI * 2);
+        cctx.strokeStyle = "#4f8cff";
+        cctx.lineWidth = 4;
+        cctx.stroke();
+      }
     }
 
     function onPeer(ev) {
@@ -247,7 +294,7 @@
       $peer.textContent = on ? "● 폰 연결됨" : "● 폰 대기 중";
       $peer.classList.toggle("on", on);
       $qr.hidden = on;
-      if (!on) { endStroke(); cctx.clearRect(0, 0, cursor.width, cursor.height); }
+      if (!on) { endStroke(); $palette.hidden = true; cctx.clearRect(0, 0, cursor.width, cursor.height); }
     }
 
     // ---- 세션 + WebSocket ----

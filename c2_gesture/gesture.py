@@ -21,6 +21,9 @@ STABLE_FRAMES = int(os.getenv("STABLE_FRAMES", "3"))     # 제스처 전환에 �
 DRAW_RELEASE_FRAMES = int(os.getenv("DRAW_RELEASE_FRAMES", "6"))  # draw 에서 빠져나갈 때 필요한 연속 프레임
 LOST_GRACE_MS = float(os.getenv("LOST_GRACE_MS", "300"))  # 손을 잠깐 놓쳤다 찾으면 이전 제스처 이어가기
 SAVE_FRAMES = int(os.getenv("SAVE_FRAMES", "15"))       # 엄지 척 유지 프레임(오작동 방지로 더 길게)
+CLEAR_FRAMES = int(os.getenv("CLEAR_FRAMES", "30"))     # 🤘 유지 프레임(약 1초, 전체 지우기라 가장 길게)
+PALETTE_FRAMES = int(os.getenv("PALETTE_FRAMES", "8"))  # 3손가락 유지 프레임(색상 창 열기)
+SWIPE_DIST = float(os.getenv("SWIPE_DIST", "0.12"))     # 색상 한 칸 넘기는 데 필요한 좌우 이동(그림판 폭 비율)
 THUMB_MARGIN = float(os.getenv("THUMB_MARGIN", "0.2"))  # 엄지 끝이 나머지보다 높아야 하는 정도(손 크기 비율)
 ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 좌우 여백(0~0.5)
 ACTIVE_TOP = float(os.getenv("ACTIVE_TOP", "0.05"))       # 카메라 위 여백
@@ -28,6 +31,9 @@ ACTIVE_TOP = float(os.getenv("ACTIVE_TOP", "0.05"))       # 카메라 위 여백
 ACTIVE_BOTTOM = float(os.getenv("ACTIVE_BOTTOM", "0.4"))
 MIN_CUTOFF = float(os.getenv("FILTER_MIN_CUTOFF", "1.5"))
 BETA = float(os.getenv("FILTER_BETA", "5.0"))
+
+# 오작동 방지로 STABLE_FRAMES 보다 오래 유지해야 전환되는 제스처
+HOLD_FRAMES = {Gesture.SAVE: SAVE_FRAMES, Gesture.CLEAR: CLEAR_FRAMES, Gesture.PALETTE: PALETTE_FRAMES}
 
 
 class OneEuroFilter:
@@ -89,6 +95,10 @@ def classify(lm, drawing: bool = False) -> Gesture:
         return Gesture.HOVER
     if i and m and r and p:
         return Gesture.ERASE
+    if i and p and not (m or r):
+        return Gesture.CLEAR
+    if i and m and r and not p:
+        return Gesture.PALETTE
     if not (i or m or r or p):
         return Gesture.SAVE if thumb_up(lm) else Gesture.IDLE
     return Gesture.HOVER  # 애매한 손 모양은 그리지 않고 커서만 이동
@@ -115,24 +125,47 @@ class GestureEngine:
         self.candidate = Gesture.NONE
         self.count = 0
         self.lost: tuple[Gesture, float] | None = None  # (놓치기 직전 제스처, 놓친 시각 ms)
+        self.swipe_x: float | None = None  # palette 중 스와이프 기준 x (한 칸 넘길 때마다 갱신)
         self.fx, self.fy = OneEuroFilter(), OneEuroFilter()
+
+    def _need(self, g: Gesture) -> int:
+        if g in HOLD_FRAMES:
+            return HOLD_FRAMES[g]
+        if self.gesture == Gesture.DRAW:
+            return DRAW_RELEASE_FRAMES
+        return STABLE_FRAMES
 
     def _debounce(self, g: Gesture) -> Gesture:
         if g == self.gesture:
             self.candidate, self.count = g, 0
         elif g == self.candidate:
             self.count += 1
-            if g == Gesture.SAVE:
-                need = SAVE_FRAMES
-            elif self.gesture == Gesture.DRAW:
-                need = DRAW_RELEASE_FRAMES
-            else:
-                need = STABLE_FRAMES
-            if self.count >= need:
+            if self.count >= self._need(g):
                 self.gesture, self.count = g, 0
         else:
             self.candidate, self.count = g, 1
         return self.gesture
+
+    def _hold(self) -> float | None:
+        """길게 유지해야 하는 제스처로 바뀌는 중이면 진행률(0~1)."""
+        c = self.candidate
+        if c in HOLD_FRAMES and c != self.gesture and self.count > 0:
+            return round(self.count / HOLD_FRAMES[c], 2)
+        return None
+
+    def _swipe(self, g: Gesture, x: float) -> int | None:
+        """palette 중 기준점에서 SWIPE_DIST 이상 움직이면 한 칸(±1)."""
+        if g != Gesture.PALETTE:
+            self.swipe_x = None
+            return None
+        if self.swipe_x is None:
+            self.swipe_x = x
+            return None
+        dx = x - self.swipe_x
+        if abs(dx) < SWIPE_DIST:
+            return None
+        self.swipe_x = x
+        return 1 if dx > 0 else -1
 
     def update(self, frame: LandmarkFrame) -> GestureEvent | None:
         if not frame.landmarks:
@@ -163,10 +196,13 @@ class GestureEngine:
             px = 1 - p[0] if frame.mirrored else p[0]
             return (round(_to_canvas_x(px), 4), round(_to_canvas_y(p[1]), 4))
 
+        cx = self.fx(_to_canvas_x(x), t)
         return GestureEvent(
             gesture=g,
-            x=round(self.fx(_to_canvas_x(x), t), 4),
+            x=round(cx, 4),
             y=round(self.fy(_to_canvas_y(pt[1]), t), 4),
             ts=frame.ts,
             landmarks=[to_canvas_pt(p) for p in lm],
+            hold=self._hold(),
+            swipe=self._swipe(g, cx),
         )
