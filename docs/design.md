@@ -69,7 +69,8 @@ WebSocket 종료 코드: `4404` 없는 세션, `4409` 같은 역할의 새 연�
   `draw` 에서 벗어나려면 `DRAW_RELEASE_FRAMES` 연속 필요. 손을 놓쳤다가 `LOST_GRACE_MS` 안에 다시 찾으면 이전 제스처 유지
 - 엄지 척: 네 손가락 접힘 + 엄지 끝(4)이 다른 모든 점보다 `THUMB_MARGIN`×손크기 이상 높고 위를 향함
 - 저장: 그림판이 `save` 로 바뀌는 순간 1회 다운로드 (`airsketch-날짜-시각.png`, 흰 배경)
-- 좌표: 전면 카메라 좌우 반전 → 가장자리 `ACTIVE_MARGIN` 잘라 0~1 로 확장 → One Euro Filter
+- 좌표: 전면 카메라 좌우 반전 → 가장자리 여백(좌우 `ACTIVE_MARGIN`, 위 `ACTIVE_TOP`, 아래 `ACTIVE_BOTTOM`) 잘라 0~1 로 확장 → One Euro Filter
+  - 아래 여백을 크게 두는 이유: 검지 끝은 손 맨 위라, 카메라 맨 아래까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊김
 
 ## 실행
 
