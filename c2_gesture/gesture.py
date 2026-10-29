@@ -1,7 +1,7 @@
 """랜드마크 → 제스처 판정 + 좌표 스무딩(One Euro Filter).
 
 MediaPipe Hand Landmarker 인덱스:
-  0 손목 / 5·9·13·17 각 손가락 MCP / 6·10·14·18 PIP / 8·12·16·20 끝(TIP)
+  0 손목 / 2 엄지 MCP, 4 엄지 끝 / 5·9·13·17 각 손가락 MCP / 6·10·14·18 PIP / 8·12·16·20 끝(TIP)
 """
 import math
 import os
@@ -9,11 +9,19 @@ import os
 from common.schema import Gesture, GestureEvent, LandmarkFrame
 
 WRIST = 0
+THUMB_MCP, THUMB_TIP = 2, 4
 INDEX_TIP, MIDDLE_MCP = 8, 9
 FINGERS = [(8, 6), (12, 10), (16, 14), (20, 18)]  # (tip, pip): 검지, 중지, 약지, 새끼
 
 EXTEND_RATIO = float(os.getenv("EXTEND_RATIO", "1.1"))   # tip-손목 거리 / pip-손목 거리
+# 그리는 중(draw)에는 판정을 느슨하게: 검지는 덜 펴져도, 다른 손가락은 더 확실히 펴져야 인정
+DRAW_INDEX_RATIO = float(os.getenv("DRAW_INDEX_RATIO", "1.0"))
+DRAW_OTHER_RATIO = float(os.getenv("DRAW_OTHER_RATIO", "1.25"))
 STABLE_FRAMES = int(os.getenv("STABLE_FRAMES", "3"))     # 제스처 전환에 필요한 연속 프레임
+DRAW_RELEASE_FRAMES = int(os.getenv("DRAW_RELEASE_FRAMES", "6"))  # draw 에서 빠져나갈 때 필요한 연속 프레임
+LOST_GRACE_MS = float(os.getenv("LOST_GRACE_MS", "300"))  # 손을 잠깐 놓쳤다 찾으면 이전 제스처 이어가기
+SAVE_FRAMES = int(os.getenv("SAVE_FRAMES", "15"))       # 엄지 척 유지 프레임(오작동 방지로 더 길게)
+THUMB_MARGIN = float(os.getenv("THUMB_MARGIN", "0.2"))  # 엄지 끝이 나머지보다 높아야 하는 정도(손 크기 비율)
 ACTIVE_MARGIN = float(os.getenv("ACTIVE_MARGIN", "0.1"))  # 카메라 좌우 여백(0~0.5)
 ACTIVE_TOP = float(os.getenv("ACTIVE_TOP", "0.05"))       # 카메라 위 여백
 # 카메라 아래 여백. 검지 끝은 손 맨 위라 끝까지 내리면 손바닥이 화면 밖으로 나가 인식이 끊기므로 크게 둠
@@ -57,14 +65,24 @@ def _dist(a, b) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def finger_states(lm) -> list[bool]:
+def finger_states(lm, ratios=(EXTEND_RATIO,) * 4) -> list[bool]:
     """[검지, 중지, 약지, 새끼] 펴짐 여부. 손 방향과 무관하도록 손목 거리로 비교."""
     w = lm[WRIST]
-    return [_dist(lm[tip], w) > _dist(lm[pip], w) * EXTEND_RATIO for tip, pip in FINGERS]
+    return [_dist(lm[tip], w) > _dist(lm[pip], w) * k for (tip, pip), k in zip(FINGERS, ratios)]
 
 
-def classify(lm) -> Gesture:
-    i, m, r, p = finger_states(lm)
+def thumb_up(lm) -> bool:
+    """엄지 끝이 손에서 가장 높은 점이고(이미지 y 최소), 엄지가 위쪽을 향함."""
+    tip, mcp = lm[THUMB_TIP], lm[THUMB_MCP]
+    size = _dist(lm[WRIST], lm[MIDDLE_MCP])
+    top = min(pt[1] for k, pt in enumerate(lm) if k > THUMB_TIP)  # 엄지 외 손가락 중 가장 높은 점
+    dx, dy = tip[0] - mcp[0], tip[1] - mcp[1]
+    return tip[1] < top - THUMB_MARGIN * size and -dy > abs(dx)
+
+
+def classify(lm, drawing: bool = False) -> Gesture:
+    ratios = (DRAW_INDEX_RATIO,) + (DRAW_OTHER_RATIO,) * 3 if drawing else (EXTEND_RATIO,) * 4
+    i, m, r, p = finger_states(lm, ratios)
     if i and not (m or r or p):
         return Gesture.DRAW
     if i and m and not (r or p):
@@ -72,7 +90,7 @@ def classify(lm) -> Gesture:
     if i and m and r and p:
         return Gesture.ERASE
     if not (i or m or r or p):
-        return Gesture.IDLE
+        return Gesture.SAVE if thumb_up(lm) else Gesture.IDLE
     return Gesture.HOVER  # 애매한 손 모양은 그리지 않고 커서만 이동
 
 
@@ -96,6 +114,7 @@ class GestureEngine:
         self.gesture = Gesture.NONE
         self.candidate = Gesture.NONE
         self.count = 0
+        self.lost: tuple[Gesture, float] | None = None  # (놓치기 직전 제스처, 놓친 시각 ms)
         self.fx, self.fy = OneEuroFilter(), OneEuroFilter()
 
     def _debounce(self, g: Gesture) -> Gesture:
@@ -103,7 +122,13 @@ class GestureEngine:
             self.candidate, self.count = g, 0
         elif g == self.candidate:
             self.count += 1
-            if self.count >= STABLE_FRAMES:
+            if g == Gesture.SAVE:
+                need = SAVE_FRAMES
+            elif self.gesture == Gesture.DRAW:
+                need = DRAW_RELEASE_FRAMES
+            else:
+                need = STABLE_FRAMES
+            if self.count >= need:
                 self.gesture, self.count = g, 0
         else:
             self.candidate, self.count = g, 1
@@ -114,14 +139,22 @@ class GestureEngine:
             # 디바운스 중(candidate 있음)에 손이 사라져도 그림판의 골격을 지우도록 알림
             if self.gesture == Gesture.NONE and self.candidate == Gesture.NONE:
                 return None
+            self.lost = (self.gesture, frame.ts)
             self.gesture = self.candidate = Gesture.NONE
             self.count = 0
-            self.fx.reset()
-            self.fy.reset()
             return GestureEvent(gesture=Gesture.NONE, ts=frame.ts)
 
+        if self.lost:
+            prev, lost_ts = self.lost
+            self.lost = None
+            if frame.ts - lost_ts <= LOST_GRACE_MS:
+                self.gesture = self.candidate = prev  # 짧은 인식 끊김: 디바운스 없이 이어감
+            else:
+                self.fx.reset()
+                self.fy.reset()
+
         lm = frame.landmarks
-        g = self._debounce(classify(lm))
+        g = self._debounce(classify(lm, drawing=self.gesture == Gesture.DRAW))
         pt = lm[MIDDLE_MCP] if g == Gesture.ERASE else lm[INDEX_TIP]
         x = 1 - pt[0] if frame.mirrored else pt[0]
         t = frame.ts / 1000.0
