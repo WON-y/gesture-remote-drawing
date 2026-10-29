@@ -15,6 +15,7 @@ services:
     volumes:
       - ./edge/certs:/etc/nginx/certs:ro
       - ./web:/usr/share/nginx/html:ro   # 개발 중 HTML 수정 즉시 반영
+      - ./data/gallery/images:/data/gallery-images:ro   # 공유된 그림 (DB 는 노출 안 함)
     depends_on:
       c1_gateway:
         condition: service_healthy
@@ -52,6 +53,10 @@ services:
       C2_URL: ws://c2_gesture:8001
       SESSION_TTL: ${SESSION_TTL:-3600}
       PLAYER_IDLE_SEC: ${PLAYER_IDLE_SEC:-300}
+      GALLERY_DIR: /data/gallery
+      GALLERY_MAX_MB: 10   # edge 의 client_max_body_size 와 맞출 것
+    volumes:
+      - ./data/gallery:/data/gallery   # 공유된 그림 + gallery.db (재빌드해도 유지)
     depends_on:
       c2_gesture:
         condition: service_healthy

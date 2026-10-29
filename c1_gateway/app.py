@@ -8,6 +8,7 @@
   canvas  --WS /ws/canvas/{sid}/{pid}-->        방의 모든 플레이어 제스처 수신, 펜/지우기/스냅샷 송신
   cam     --WS /ws/cam/{sid}/{pid}----->        랜드마크 송신 → c2_gesture 로 전달
   c2_gesture 가 돌려준 GestureEvent 에 player 를 붙여 → 방의 모든 canvas 로 전달
+  canvas  --POST /api/gallery-->                그림 공유 (gallery.py)
 """
 import asyncio
 import contextlib
@@ -23,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from pydantic import TypeAdapter, ValidationError
 from websockets.asyncio.client import connect as ws_connect
 
+from c1_gateway import gallery
 from common.schema import (
     CanvasMessage, GestureEvent, PlayerInfo, PlayersEvent, PlayerState, SessionInfo, Snapshot, SnapshotRequest,
 )
@@ -101,12 +103,14 @@ async def _cleanup_loop():
 
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
+    gallery.init()
     task = asyncio.create_task(_cleanup_loop())
     yield
     task.cancel()
 
 
 app = FastAPI(title="airsketch c1_gateway", lifespan=lifespan)
+app.include_router(gallery.router)
 
 
 def _qr_svg(data: str) -> str:
