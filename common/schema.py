@@ -72,11 +72,12 @@ class PlayersEvent(BaseModel):
 # ---- canvas → gateway → 방의 모든 canvas ----
 # player 는 gateway 가 보낸 쪽 기준으로 덮어씀 (클라이언트 값은 무시)
 class PenEvent(BaseModel):
-    """툴바에서 펜 색/굵기를 바꿈. 제스처 색상 창(swipe)은 GestureEvent 로 각 그림판이 직접 반영."""
+    """툴바에서 펜 색/굵기/브러시를 바꿈. 제스처 색상 창(swipe)은 GestureEvent 로 각 그림판이 직접 반영."""
     type: Literal["pen"] = "pen"
     player: str | None = None
     color_idx: int | None = Field(None, ge=0, le=63)
     width: int | None = Field(None, ge=2, le=30)
+    brush_idx: int | None = Field(None, ge=0, le=63)
 
 
 class ClearEvent(BaseModel):
@@ -88,6 +89,7 @@ class ClearEvent(BaseModel):
 class PenState(BaseModel):
     color_idx: int = Field(ge=0, le=63)
     width: int = Field(ge=2, le=30)
+    brush_idx: int = Field(0, ge=0, le=63)
 
 
 # ---- 늦게 들어온 그림판 동기화 ----
